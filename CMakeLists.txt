@@ -4,7 +4,7 @@ project(rosaria)
 # Load catkin and all dependencies required for this package
 # TODO: remove all from COMPONENTS that are not catkin packages.
 find_package(catkin REQUIRED COMPONENTS message_generation roscpp nav_msgs geometry_msgs sensor_msgs tf
-  dynamic_reconfigure)
+  dynamic_reconfigure std_srvs )
 
 # Set the build type.  Options are:
 #  Coverage       : w/ debug symbols, w/o optimization, w/ code-coverage
@@ -23,12 +23,14 @@ find_package(catkin REQUIRED COMPONENTS message_generation roscpp nav_msgs geome
 add_message_files(
   FILES
   BumperState.msg
+  GripperState.msg
+  PaddleState.msg
 )
 #uncomment if you have defined services
-#add_service_files(
-#  FILES
+add_service_files(
+  FILES openGripper.srv raiseGripper.srv
 #  # TODO: List your msg files here
-#)
+)
 
 generate_dynamic_reconfigure_options(cfg/RosAria.cfg)
 
@@ -50,20 +52,21 @@ add_executable(RosAria RosAria.cpp)
 add_dependencies(RosAria rosaria_gencfg)
 add_dependencies(RosAria rosaria_gencpp)
 
+
 target_link_libraries(RosAria ${catkin_LIBRARIES} ${Boost_LIBRARIES} Aria pthread dl rt)
 set_target_properties(RosAria PROPERTIES COMPILE_FLAGS "-fPIC")
 #set_target_properties(RosAria PROPERTIES LINK_FLAGS "-Wl")
 
 ## Generate added messages and services with any dependencies listed here
 generate_messages(
-  DEPENDENCIES geometry_msgs std_msgs
+  DEPENDENCIES geometry_msgs std_msgs 
 )
 # TODO: fill in what other packages will need to use this package
 ## LIBRARIES: libraries you create in this project that dependent projects also need
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-    DEPENDS roscpp nav_msgs geometry_msgs sensor_msgs tf
+    DEPENDS roscpp nav_msgs geometry_msgs sensor_msgs tf 
 )
 
 #############

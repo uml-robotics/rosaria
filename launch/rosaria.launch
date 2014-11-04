@@ -1,0 +1,5 @@
+<launch>
+    <node name="rosaria" pkg="rosaria" type="RosAria" output="screen">
+        <param name="port" value="/dev/Aria" />
+    </node>
+</launch>
