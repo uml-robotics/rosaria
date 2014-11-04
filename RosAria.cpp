@@ -24,7 +24,6 @@
 #include "std_msgs/Bool.h"
 #include "std_srvs/Empty.h"
 #include "sensor_msgs/Range.h"
-#include <rosaria/CommandGripperAction.h>
 #include "rosaria/openGripper.h"
 #include "rosaria/raiseGripper.h"
 #include "rosaria/GripperState.h"
