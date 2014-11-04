@@ -50,7 +50,6 @@ class RosAriaNode
     void sonarConnectCb();
     void dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t level);
     void readParameters();
-    void executeCb(const rosaria::CommandGripperGoalConstPtr& goal);
     
   protected:
     ros::NodeHandle n;
