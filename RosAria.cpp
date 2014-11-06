@@ -321,9 +321,9 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
   gripper_pub = n.advertise<rosaria::GripperState>("gripper_state",1000);
   paddle_pub = n.advertise<rosaria::PaddleState>("paddle_state",1000);
-  sonar_pub = n.advertise<sensor_msgs::PointCloud>("sonar", 50,
-    boost::bind(&RosAriaNode::sonarConnectCb, this),
-    boost::bind(&RosAriaNode::sonarConnectCb, this));
+  //sonar_pub = n.advertise<sensor_msgs::PointCloud>("sonar", 50,
+//    boost::bind(&RosAriaNode::sonarConnectCb, this),
+//    boost::bind(&RosAriaNode::sonarConnectCb, this));
 
   voltage_pub = n.advertise<std_msgs::Float64>("battery_voltage", 1000);
   for(int i =0; i < 16; i++) {
@@ -331,12 +331,12 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
     sprintf(str, "%d",i);
     std::string topic_name = "range";
     topic_name.append(str);
-    if( i == 0 )
+    //if( i == 0 )
       range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name, 1000,
       boost::bind(&RosAriaNode::sonarConnectCb, this),
       boost::bind(&RosAriaNode::sonarConnectCb, this));
-    else
-      range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name, 1000);
+    //else
+    //  range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name, 1000);
     
   }
   recharge_state_pub = n.advertise<std_msgs::Int8>("battery_recharge_state", 5, true /*latch*/ );
@@ -511,7 +511,7 @@ int RosAriaNode::Setup()
   robot->enableMotors();
 
   // disable sonars on startup
-  robot->disableSonar();
+//  robot->disableSonar();
 
   // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
   robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
@@ -559,7 +559,7 @@ void RosAriaNode::spin()
    sonar_array[i].transform.rotation = tf::createQuaternionMsgFromYaw(_reading->getSensorTh() * M_PI / 180.0);
   }
 
-  ros::Rate loop_rate(10);
+  ros::Rate loop_rate(30);
   right_target = 0.03;
   left_target = -0.03;
   height_target = 0.1;
@@ -850,8 +850,8 @@ void RosAriaNode::publish()
       range[i].header.stamp = ros::Time::now();
       range[i].radiation_type = 0;
       range[i].field_of_view = 0.2618f; 
-      range[i].min_range = 0.025f;
-      range[i].max_range = 5.0f;
+      range[i].min_range = 0.03f;
+      range[i].max_range = 3.0f;
       char str[15];
       sprintf(str, "%d",i);
       std::string _frame_id = "sonar";
