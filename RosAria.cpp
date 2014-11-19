@@ -837,7 +837,7 @@ void RosAriaNode::publish()
     int j = 0;
     ArSensorReading* reading = NULL;
     reading = robot->getSonarReading(9);
-    if(reading->getRange() == 5000)
+    if(reading->getRange() > 4500)
     {
       i = 8;
       j = 8;
