@@ -258,7 +258,6 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
 
 void RosAriaNode::sonarConnectCb()
 {
-  robot->lock();
   if (range_pub[0].getNumSubscribers() == 0 && range_pub[1].getNumSubscribers()==0 &&
       range_pub[2].getNumSubscribers() == 0 && range_pub[3].getNumSubscribers()==0 &&
       range_pub[4].getNumSubscribers() == 0 && range_pub[5].getNumSubscribers()==0 &&
@@ -266,17 +265,20 @@ void RosAriaNode::sonarConnectCb()
       range_pub[8].getNumSubscribers() == 0 && range_pub[9].getNumSubscribers()==0 &&
       range_pub[10].getNumSubscribers() == 0 && range_pub[11].getNumSubscribers()==0 &&
       range_pub[12].getNumSubscribers() == 0 && range_pub[13].getNumSubscribers()==0 &&
-      range_pub[14].getNumSubscribers() == 0 && range_pub[15].getNumSubscribers()==0)
+      range_pub[14].getNumSubscribers() == 0 && range_pub[15].getNumSubscribers()==0 && use_sonar)
   {
+    robot->lock();
     robot->disableSonar();
+    robot->unlock();
     use_sonar = false;
   }
-  else
+  else if (!use_sonar)
   {
+    robot->lock();
     robot->enableSonar();
+    robot->unlock();
     use_sonar = true;
   }
-  robot->unlock();
 }
 
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
