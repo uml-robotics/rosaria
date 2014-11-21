@@ -134,6 +134,8 @@ class RosAriaNode
     bool sonars__crossed_the_streams; //true when rear sonars plugged into front port, and front sonars ignored
     bool use_gripper;
 
+    bool setup_complete; //postpone timers until setup is g2g
+
     // Debug Aria
     bool debug_aria;
     std::string aria_log_filename;
@@ -303,7 +305,7 @@ void RosAriaNode::sonarConnectCb()
 }
 
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
-  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false), sonar_tf_array(), ranges()
+  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false), sonar_tf_array(), ranges(), setup_complete(false)
 {
   sonar_listeners = 0;
   // read in config options
@@ -603,6 +605,8 @@ int RosAriaNode::Setup()
   currentPaddleState = paddleState.RAISED;
   height_target = 0.13;
 
+  setup_complete = true;
+
   return 0;
 }
 
@@ -613,6 +617,7 @@ void RosAriaNode::spin()
 
 void RosAriaNode::sonarCallback(const ros::TimerEvent &tick)
 {
+    if (!setup_complete) return;
     ros::Time gameTime = ros::Time::now(); 
     for(int i =0; i < 16; i++)
     {
@@ -623,6 +628,7 @@ void RosAriaNode::sonarCallback(const ros::TimerEvent &tick)
 
 void RosAriaNode::gripperCallback(const ros::TimerEvent &tick)
 {
+    if (!setup_complete) return;
     right_gripper_base_trans.header.stamp = ros::Time::now();
     right_gripper_end_trans.header.stamp = ros::Time::now();
     left_gripper_base_trans.header.stamp = ros::Time::now();
