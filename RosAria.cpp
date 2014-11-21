@@ -525,7 +525,7 @@ int RosAriaNode::Setup()
   for(; i<16; i++) {
     //populate the RangeArray msg
     std::stringstream _frame_id;
-    _frame_id << "sonar";
+    _frame_id << "sonar" << i;
     ranges.data[i].header.frame_id = _frame_id.str();
     ranges.data[i].radiation_type = 0;
     ranges.data[i].field_of_view = 0.2618f; 
