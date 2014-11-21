@@ -76,7 +76,9 @@ class RosAriaNode
     ros::Subscriber cmdvel_sub;
 
     ros::Timer gripper_timer;
+    ros::Timer sonar_tf_timer;
     void gripperCallback(const ros::TimerEvent &);
+    void sonarCallback(const ros::TimerEvent &);
 
     ros::ServiceServer enable_srv;
     ros::ServiceServer disable_srv;
@@ -377,7 +379,7 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   open_service = n.advertiseService("open_gripper", &RosAriaNode::open_gripper_cb, this);
  
   veltime = ros::Time::now();
-
+  sonar_tf_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::sonarCallback, this);
   gripper_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::gripperCallback, this);
 }
 
@@ -607,6 +609,16 @@ void RosAriaNode::spin()
   ros::spin();
 }
 
+void RosAriaNode::sonarCallback(const ros::TimerEvent &tick)
+{
+    ros::Time gameTime = ros::Time::now(); 
+    for(int i =0; i < 16; i++)
+    {
+      sonar_tf_array[i].header.stamp = gameTime;
+      gripper_broadcaster.sendTransform(sonar_tf_array[i]);
+    }
+}
+
 void RosAriaNode::gripperCallback(const ros::TimerEvent &tick)
 {
     right_gripper_base_trans.header.stamp = ros::Time::now();
@@ -653,13 +665,6 @@ void RosAriaNode::gripperCallback(const ros::TimerEvent &tick)
     gripper_broadcaster.sendTransform(right_gripper_end_trans);
     gripper_broadcaster.sendTransform(left_gripper_base_trans);
     gripper_broadcaster.sendTransform(left_gripper_end_trans);
-   
-    ros::Time gameTime = ros::Time::now(); 
-    for(int i =0; i < 16; i++)
-    {
-      sonar_tf_array[i].header.stamp = gameTime;
-      gripper_broadcaster.sendTransform(sonar_tf_array[i]);
-    }
 
     gripperState.state = gripperManager->getGripState();
     if (moving)
