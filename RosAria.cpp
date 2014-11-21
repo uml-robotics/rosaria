@@ -50,6 +50,7 @@ class RosAriaNode
     void publish();
     bool hasSonarSubscribers();
     void sonarConnectCb();
+    void sonarDisconnectCb();
     void dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t level);
     void readParameters();
     
@@ -288,20 +289,24 @@ bool RosAriaNode::hasSonarSubscribers()
 
 void RosAriaNode::sonarConnectCb()
 {
-  if (hasSonarSubscribers() && use_sonar)
+  robot->lock();
+  if (hasSonarSubscribers() && !use_sonar)
   {
-    robot->lock();
-    robot->disableSonar();
-    robot->unlock();
-    use_sonar = false;
-  }
-  else if (!use_sonar)
-  {
-    robot->lock();
     robot->enableSonar();
-    robot->unlock();
     use_sonar = true;
   }
+  robot->unlock();
+}
+
+void RosAriaNode::sonarDisconnectCb()
+{
+  robot->lock();
+  if (!hasSonarSubscribers() && use_sonar)
+  {
+    robot->disableSonar();
+    use_sonar = false;
+  }
+  robot->unlock();
 }
 
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
@@ -353,14 +358,14 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   
   combined_range_pub = n.advertise<rosaria::RangeArray>("ranges", 1000,
     boost::bind(&RosAriaNode::sonarConnectCb,this),
-    boost::bind(&RosAriaNode::sonarConnectCb, this));
+    boost::bind(&RosAriaNode::sonarDisconnectCb, this));
 
   for(int i =0; i < 16; i++) {
     std::stringstream topic_name;
     topic_name << "range" << i;
     range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name.str().c_str(), 1000,
             boost::bind(&RosAriaNode::sonarConnectCb, this),
-            boost::bind(&RosAriaNode::sonarConnectCb, this));
+            boost::bind(&RosAriaNode::sonarDisconnectCb, this));
   }
   recharge_state_pub = n.advertise<std_msgs::Int8>("battery_recharge_state", 5, true /*latch*/ );
   recharge_state.data = -2;
@@ -507,24 +512,27 @@ int RosAriaNode::Setup()
   height_current = 0.1;
 
   readParameters();
+  for (int i=0;i<16;i++) {
+      sensor_msgs::Range r;
+      ranges.data.push_back(r);
+  }
 
   int i=0,j=0;
   if (sonars__crossed_the_streams) {
     i=8;
     j=8;
-    for(; i<16; i++) {
-      //populate the RangeArray msg
-      std::stringstream _frame_id;
-      _frame_id << "sonar";
-      sensor_msgs::Range r;
-      r.header.frame_id = _frame_id.str();
-      r.radiation_type = 0;
-      r.field_of_view = 0.2618f; 
-      r.min_range = 0.03f;
-      r.max_range = 5.0f;
-      ranges.data.push_back(r);
-    }
   }
+  for(; i<16; i++) {
+    //populate the RangeArray msg
+    std::stringstream _frame_id;
+    _frame_id << "sonar";
+    ranges.data[i].header.frame_id = _frame_id.str();
+    ranges.data[i].radiation_type = 0;
+    ranges.data[i].field_of_view = 0.2618f; 
+    ranges.data[i].min_range = 0.03f;
+    ranges.data[i].max_range = 5.0f;
+  }
+  
 
   // Start dynamic_reconfigure server
   dynamic_reconfigure_server = new dynamic_reconfigure::Server<rosaria::RosAriaConfig>;
