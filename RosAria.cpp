@@ -380,7 +380,9 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
  
   veltime = ros::Time::now();
   sonar_tf_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::sonarCallback, this);
+#if 0
   gripper_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::gripperCallback, this);
+#endif
 }
 
 RosAriaNode::~RosAriaNode()
