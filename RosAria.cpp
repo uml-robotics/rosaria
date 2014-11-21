@@ -72,6 +72,9 @@ class RosAriaNode
 
     ros::Subscriber cmdvel_sub;
 
+    ros::Timer gripper_timer;
+    void gripperCallback(const ros::TimerEvent &);
+
     ros::ServiceServer enable_srv;
     ros::ServiceServer disable_srv;
     ros::ServiceServer raise_service;
@@ -88,6 +91,7 @@ class RosAriaNode
     int currentPaddleState;
     int sonar_listeners;
     double right_target, left_target, height_target;
+    double right_current, left_current, height_current;
 
     ArRobotConnector *conn;
     ArRobot *robot;
@@ -119,9 +123,11 @@ class RosAriaNode
 
     //Sonar support
     bool use_sonar;  // enable and publish sonars
+    bool sonar_changed; //if use_sonar is different because of sonar con/discon
 
     bool use_gripper;
 
+    geometry_msgs::TransformStamped sonar_tf_array[16];
     // Debug Aria
     bool debug_aria;
     std::string aria_log_filename;
@@ -282,7 +288,7 @@ void RosAriaNode::sonarConnectCb()
 }
 
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
-  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false)
+  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false)
 {
   sonar_listeners = 0;
   // read in config options
@@ -360,6 +366,8 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   open_service = n.advertiseService("open_gripper", &RosAriaNode::open_gripper_cb, this);
  
   veltime = ros::Time::now();
+
+  gripper_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::gripperCallback, this);
 }
 
 RosAriaNode::~RosAriaNode()
@@ -513,7 +521,7 @@ int RosAriaNode::Setup()
   robot->enableMotors();
 
   // disable sonars on startup
-//  robot->disableSonar();
+  robot->disableSonar();
 
   // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
   robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
@@ -531,7 +539,6 @@ int RosAriaNode::Setup()
 
   currentPaddleState = paddleState.RAISED;
   height_target = 0.13;
-  sonarConnectCb(); 
 
   return 0;
 }
@@ -542,74 +549,41 @@ void RosAriaNode::spin()
     //geometry_msgs::TransformStamped right_gripper_end_trans;
     //geometry_msgs::TransformStamped left_gripper_base_trans;
     //geometry_msgs::TransformStamped left_gripper_end_trans;
-  geometry_msgs::TransformStamped sonar_array[16];
   
   for(int i = 0; i < 16; i++)
   {
-    sonar_array[i].header.frame_id = "base_link";
+    sonar_tf_array[i].header.frame_id = "base_link";
     char str[15];
     sprintf(str, "%d",i);
     std::string _frame_id = "sonar";
     _frame_id.append(str);
-    sonar_array[i].child_frame_id = _frame_id;
+    sonar_tf_array[i].child_frame_id = _frame_id;
    ArSensorReading* _reading = NULL;
    _reading = robot->getSonarReading(i);
-   sonar_array[i].transform.translation.x = _reading->getSensorX() / 1000.0;
-   sonar_array[i].transform.translation.y = _reading->getSensorY() / 1000.0;
-   sonar_array[i].transform.translation.z = 0.19;
+   sonar_tf_array[i].transform.translation.x = _reading->getSensorX() / 1000.0;
+   sonar_tf_array[i].transform.translation.y = _reading->getSensorY() / 1000.0;
+   sonar_tf_array[i].transform.translation.z = 0.19;
 
-   sonar_array[i].transform.rotation = tf::createQuaternionMsgFromYaw(_reading->getSensorTh() * M_PI / 180.0);
+   sonar_tf_array[i].transform.rotation = tf::createQuaternionMsgFromYaw(_reading->getSensorTh() * M_PI / 180.0);
   }
 
-  ros::Rate loop_rate(30);
   right_target = 0.03;
   left_target = -0.03;
   height_target = 0.1;
   
-  double right_current = 0.03;
-  double left_current = -0.03;
-  double height_current = 0.1;
+  right_current = 0.03;
+  left_current = -0.03;
+  height_current = 0.1;
   
-  right_gripper_base_trans.header.frame_id = "base_link";
-  right_gripper_base_trans.child_frame_id = "right_gripper_base_link";
-  right_gripper_end_trans.header.frame_id = "right_gripper_base_link";
-  right_gripper_end_trans.child_frame_id = "right_gripper_end_link";
-  
-  right_gripper_base_trans.transform.rotation = tf::createQuaternionMsgFromYaw(0);
-  right_gripper_end_trans.transform.rotation = tf::createQuaternionMsgFromYaw(0);
-  
-  right_gripper_end_trans.transform.translation.x = 0.1;
-  right_gripper_end_trans.transform.translation.y = 0.0;
-  right_gripper_end_trans.transform.translation.z = 0.0;
-    
-  right_gripper_base_trans.transform.translation.x = 0.2;
+  ros::spin();
+}
 
-  left_gripper_base_trans.header.frame_id = "base_link";
-  left_gripper_base_trans.child_frame_id = "left_gripper_base_link";
-  left_gripper_end_trans.header.frame_id = "left_gripper_base_link";
-  left_gripper_end_trans.child_frame_id = "left_gripper_end_link";
-  
-  left_gripper_base_trans.transform.rotation = tf::createQuaternionMsgFromYaw(0);
-  left_gripper_end_trans.transform.rotation = tf::createQuaternionMsgFromYaw(0);
-  
-  left_gripper_end_trans.transform.translation.x = 0.1;
-  left_gripper_end_trans.transform.translation.y = 0.0;
-  left_gripper_end_trans.transform.translation.z = 0.0;
-    
-  left_gripper_base_trans.transform.translation.x = 0.2;
- 
-  
-  while (ros::ok())
-  {
+void RosAriaNode::gripperCallback(const ros::TimerEvent &tick)
+{
     right_gripper_base_trans.header.stamp = ros::Time::now();
     right_gripper_end_trans.header.stamp = ros::Time::now();
     left_gripper_base_trans.header.stamp = ros::Time::now();
     left_gripper_end_trans.header.stamp = ros::Time::now();
-
-    for(int i =0; i < 16; i++)
-    {
-      sonar_array[i].header.stamp = ros::Time::now();
-    }
 
     if(right_current < right_target )
     {
@@ -649,10 +623,12 @@ void RosAriaNode::spin()
     gripper_broadcaster.sendTransform(right_gripper_end_trans);
     gripper_broadcaster.sendTransform(left_gripper_base_trans);
     gripper_broadcaster.sendTransform(left_gripper_end_trans);
-    
+   
+    ros::Time gameTime = ros::Time::now(); 
     for(int i =0; i < 16; i++)
     {
-      gripper_broadcaster.sendTransform(sonar_array[i]);
+      sonar_tf_array[i].header.stamp = gameTime;
+      gripper_broadcaster.sendTransform(sonar_tf_array[i]);
     }
 
     gripperState.state = gripperManager->getGripState();
@@ -666,9 +642,7 @@ void RosAriaNode::spin()
     }
     gripper_pub.publish(gripperState);
     paddle_pub.publish(paddleState);
-    ros::spinOnce();
-    loop_rate.sleep();
-  }
+
 }
 
 void RosAriaNode::publish()
