@@ -25,6 +25,7 @@ add_message_files(
   BumperState.msg
   GripperState.msg
   PaddleState.msg
+  RangeArray.msg
 )
 #uncomment if you have defined services
 add_service_files(
@@ -59,7 +60,7 @@ set_target_properties(RosAria PROPERTIES COMPILE_FLAGS "-fPIC")
 
 ## Generate added messages and services with any dependencies listed here
 generate_messages(
-  DEPENDENCIES geometry_msgs std_msgs 
+  DEPENDENCIES geometry_msgs std_msgs sensor_msgs
 )
 # TODO: fill in what other packages will need to use this package
 ## LIBRARIES: libraries you create in this project that dependent projects also need
