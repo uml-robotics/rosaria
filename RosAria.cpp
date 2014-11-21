@@ -288,7 +288,7 @@ void RosAriaNode::sonarConnectCb()
 }
 
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
-  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false)
+  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false), sonar_tf_array()
 {
   sonar_listeners = 0;
   // read in config options
@@ -304,7 +304,7 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
 
   // handle debugging more elegantly
   n.param( "debug_aria", debug_aria, false ); // default not to debug
-  n.param( "aria_log_filename", aria_log_filename, std::string("Aria.log") );
+  n.param( "aria_log_filename", aria_log_filename, std::string("Aria.log") );                                                                                      
 
   // Figure out what frame_id's to use. if a tf_prefix param is specified,
   // it will be added to the beginning of the frame_ids.
@@ -458,6 +458,41 @@ int RosAriaNode::Setup()
     use_gripper = true;
   }
 
+  right_gripper_base_trans.header.frame_id = "base_link";
+  right_gripper_base_trans.child_frame_id = "right_gripper_base";
+  right_gripper_end_trans.header.frame_id = "right_gripper_base";
+  right_gripper_end_trans.child_frame_id = "right_gripper_end";
+  left_gripper_base_trans.header.frame_id = "base_link";
+  left_gripper_base_trans.child_frame_id = "left_gripper_base";
+  left_gripper_end_trans.header.frame_id = "left_gripper_base";
+  left_gripper_end_trans.child_frame_id = "left_gripper_end";
+  
+  for(int i = 0; i < 16; i++)
+  {
+    sonar_tf_array[i].header.frame_id = "base_link";
+    char str[15];
+    sprintf(str, "%d",i);
+    std::string _frame_id = "sonar";
+    _frame_id.append(str);
+    sonar_tf_array[i].child_frame_id = _frame_id;
+    ArSensorReading* _reading = NULL;
+    _reading = robot->getSonarReading(i);
+    sonar_tf_array[i].transform.translation.x = _reading->getSensorX() / 1000.0;
+    sonar_tf_array[i].transform.translation.y = _reading->getSensorY() / 1000.0;
+    sonar_tf_array[i].transform.translation.z = 0.19;
+
+    sonar_tf_array[i].transform.rotation = tf::createQuaternionMsgFromYaw(_reading->getSensorTh() * M_PI / 180.0);
+  }
+
+  right_target = 0.03;
+  left_target = -0.03;
+  height_target = 0.1;
+  
+  right_current = 0.03;
+  left_current = -0.03;
+  height_current = 0.1;
+
+
 
   readParameters();
 
@@ -544,37 +579,7 @@ int RosAriaNode::Setup()
 }
 
 void RosAriaNode::spin()
-{
-    //geometry_msgs::TransformStamped right_gripper_base_trans;
-    //geometry_msgs::TransformStamped right_gripper_end_trans;
-    //geometry_msgs::TransformStamped left_gripper_base_trans;
-    //geometry_msgs::TransformStamped left_gripper_end_trans;
-  
-  for(int i = 0; i < 16; i++)
-  {
-    sonar_tf_array[i].header.frame_id = "base_link";
-    char str[15];
-    sprintf(str, "%d",i);
-    std::string _frame_id = "sonar";
-    _frame_id.append(str);
-    sonar_tf_array[i].child_frame_id = _frame_id;
-   ArSensorReading* _reading = NULL;
-   _reading = robot->getSonarReading(i);
-   sonar_tf_array[i].transform.translation.x = _reading->getSensorX() / 1000.0;
-   sonar_tf_array[i].transform.translation.y = _reading->getSensorY() / 1000.0;
-   sonar_tf_array[i].transform.translation.z = 0.19;
-
-   sonar_tf_array[i].transform.rotation = tf::createQuaternionMsgFromYaw(_reading->getSensorTh() * M_PI / 180.0);
-  }
-
-  right_target = 0.03;
-  left_target = -0.03;
-  height_target = 0.1;
-  
-  right_current = 0.03;
-  left_current = -0.03;
-  height_current = 0.1;
-  
+{  
   ros::spin();
 }
 
@@ -619,6 +624,7 @@ void RosAriaNode::gripperCallback(const ros::TimerEvent &tick)
     left_gripper_base_trans.transform.translation.y = left_current;
     right_gripper_base_trans.transform.translation.z = height_current;
     left_gripper_base_trans.transform.translation.z = height_current;
+
     gripper_broadcaster.sendTransform(right_gripper_base_trans);
     gripper_broadcaster.sendTransform(right_gripper_end_trans);
     gripper_broadcaster.sendTransform(left_gripper_base_trans);
