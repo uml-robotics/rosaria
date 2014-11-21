@@ -24,6 +24,7 @@
 #include "std_msgs/Bool.h"
 #include "std_srvs/Empty.h"
 #include "sensor_msgs/Range.h"
+#include "rosaria/RangeArray.h"
 #include "rosaria/openGripper.h"
 #include "rosaria/raiseGripper.h"
 #include "rosaria/GripperState.h"
@@ -47,6 +48,7 @@ class RosAriaNode
     //void cmd_disable_motors_cb();
     void spin();
     void publish();
+    bool hasSonarSubscribers();
     void sonarConnectCb();
     void dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t level);
     void readParameters();
@@ -60,6 +62,7 @@ class RosAriaNode
     ros::Publisher sonar_pub;
     ros::Publisher voltage_pub;
     ros::Publisher range_pub[16];
+    ros::Publisher combined_range_pub;
 
     ros::Publisher recharge_state_pub;
     std_msgs::Int8 recharge_state;
@@ -108,6 +111,9 @@ class RosAriaNode
     tf::TransformBroadcaster odom_broadcaster;
     tf::TransformBroadcaster gripper_broadcaster;
     geometry_msgs::TransformStamped odom_trans;
+
+    rosaria::RangeArray ranges;
+    geometry_msgs::TransformStamped sonar_tf_array[16];
     
     geometry_msgs::TransformStamped right_gripper_base_trans;
     geometry_msgs::TransformStamped right_gripper_end_trans;
@@ -123,11 +129,9 @@ class RosAriaNode
 
     //Sonar support
     bool use_sonar;  // enable and publish sonars
-    bool sonar_changed; //if use_sonar is different because of sonar con/discon
-
+    bool sonars__crossed_the_streams; //true when rear sonars plugged into front port, and front sonars ignored
     bool use_gripper;
 
-    geometry_msgs::TransformStamped sonar_tf_array[16];
     // Debug Aria
     bool debug_aria;
     std::string aria_log_filename;
@@ -182,6 +186,14 @@ void RosAriaNode::readParameters()
     n_.setParam( "RevCount", RevCount);
     ROS_INFO("Setting RevCount from robot EEPROM: %d", RevCount);
   }
+
+  if (n_.hasParam("SonarReassignmentSurgery"))
+  {
+    n_.getParam( "SonarReassignmentSurgery", sonars__crossed_the_streams);
+    ROS_INFO("Setting SonarReassignmentSurgery to from ROS Parameter: %d", sonars__crossed_the_streams);
+  }
+  else
+    ROS_INFO("Sonars are not fiddled-with -- YAY");
   robot->unlock();
 }
 
@@ -262,16 +274,17 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
   robot->unlock();
 }
 
+bool RosAriaNode::hasSonarSubscribers()
+{
+    int count = combined_range_pub.getNumSubscribers();
+    for (int i = sonars__crossed_the_streams ? 8 : 0; i < 16; i++)
+        count += range_pub[i].getNumSubscribers();
+    return count > 0;
+}
+
 void RosAriaNode::sonarConnectCb()
 {
-  if (range_pub[0].getNumSubscribers() == 0 && range_pub[1].getNumSubscribers()==0 &&
-      range_pub[2].getNumSubscribers() == 0 && range_pub[3].getNumSubscribers()==0 &&
-      range_pub[4].getNumSubscribers() == 0 && range_pub[5].getNumSubscribers()==0 &&
-      range_pub[6].getNumSubscribers() == 0 && range_pub[7].getNumSubscribers()==0 &&
-      range_pub[8].getNumSubscribers() == 0 && range_pub[9].getNumSubscribers()==0 &&
-      range_pub[10].getNumSubscribers() == 0 && range_pub[11].getNumSubscribers()==0 &&
-      range_pub[12].getNumSubscribers() == 0 && range_pub[13].getNumSubscribers()==0 &&
-      range_pub[14].getNumSubscribers() == 0 && range_pub[15].getNumSubscribers()==0 && use_sonar)
+  if (hasSonarSubscribers() && use_sonar)
   {
     robot->lock();
     robot->disableSonar();
@@ -288,7 +301,7 @@ void RosAriaNode::sonarConnectCb()
 }
 
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
-  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false), sonar_tf_array()
+  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false), sonar_tf_array(), ranges()
 {
   sonar_listeners = 0;
   // read in config options
@@ -320,6 +333,8 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   frame_id_bumper = tf::resolve(tf_prefix, "bumpers_frame");
   frame_id_sonar = tf::resolve(tf_prefix, "sonar_frame");
 
+  ranges.header.frame_id = frame_id_base_link;
+
   // advertise services for data topics
   // second argument to advertise() is queue size.
   // other argmuments (optional) are callbacks, or a boolean "latch" flag (whether to send current data to new
@@ -329,23 +344,19 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
   gripper_pub = n.advertise<rosaria::GripperState>("gripper_state",1000);
   paddle_pub = n.advertise<rosaria::PaddleState>("paddle_state",1000);
-  //sonar_pub = n.advertise<sensor_msgs::PointCloud>("sonar", 50,
-//    boost::bind(&RosAriaNode::sonarConnectCb, this),
-//    boost::bind(&RosAriaNode::sonarConnectCb, this));
 
   voltage_pub = n.advertise<std_msgs::Float64>("battery_voltage", 1000);
+  
+  combined_range_pub = n.advertise<rosaria::RangeArray>("ranges", 1000,
+    boost::bind(&RosAriaNode::sonarConnectCb,this),
+    boost::bind(&RosAriaNode::sonarConnectCb, this));
+
   for(int i =0; i < 16; i++) {
-    char str[15];
-    sprintf(str, "%d",i);
-    std::string topic_name = "range";
-    topic_name.append(str);
-    //if( i == 0 )
-      range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name, 1000,
-      boost::bind(&RosAriaNode::sonarConnectCb, this),
-      boost::bind(&RosAriaNode::sonarConnectCb, this));
-    //else
-    //  range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name, 1000);
-    
+    std::stringstream topic_name;
+    topic_name << "range" << i;
+    range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name.str().c_str(), 1000,
+            boost::bind(&RosAriaNode::sonarConnectCb, this),
+            boost::bind(&RosAriaNode::sonarConnectCb, this));
   }
   recharge_state_pub = n.advertise<std_msgs::Int8>("battery_recharge_state", 5, true /*latch*/ );
   recharge_state.data = -2;
@@ -466,21 +477,18 @@ int RosAriaNode::Setup()
   left_gripper_base_trans.child_frame_id = "left_gripper_base";
   left_gripper_end_trans.header.frame_id = "left_gripper_base";
   left_gripper_end_trans.child_frame_id = "left_gripper_end";
-  
+
   for(int i = 0; i < 16; i++)
   {
-    sonar_tf_array[i].header.frame_id = "base_link";
-    char str[15];
-    sprintf(str, "%d",i);
-    std::string _frame_id = "sonar";
-    _frame_id.append(str);
-    sonar_tf_array[i].child_frame_id = _frame_id;
+    sonar_tf_array[i].header.frame_id = frame_id_base_link;
+    std::stringstream _frame_id;
+    _frame_id << "sonar" << i;
+    sonar_tf_array[i].child_frame_id = _frame_id.str();
     ArSensorReading* _reading = NULL;
     _reading = robot->getSonarReading(i);
     sonar_tf_array[i].transform.translation.x = _reading->getSensorX() / 1000.0;
     sonar_tf_array[i].transform.translation.y = _reading->getSensorY() / 1000.0;
     sonar_tf_array[i].transform.translation.z = 0.19;
-
     sonar_tf_array[i].transform.rotation = tf::createQuaternionMsgFromYaw(_reading->getSensorTh() * M_PI / 180.0);
   }
 
@@ -492,9 +500,25 @@ int RosAriaNode::Setup()
   left_current = -0.03;
   height_current = 0.1;
 
-
-
   readParameters();
+
+  int i=0,j=0;
+  if (sonars__crossed_the_streams) {
+    i=8;
+    j=8;
+    for(; i<16; i++) {
+      //populate the RangeArray msg
+      std::stringstream _frame_id;
+      _frame_id << "sonar";
+      sensor_msgs::Range r;
+      r.header.frame_id = _frame_id.str();
+      r.radiation_type = 0;
+      r.field_of_view = 0.2618f; 
+      r.min_range = 0.03f;
+      r.max_range = 5.0f;
+      ranges.data.push_back(r);
+    }
+  }
 
   // Start dynamic_reconfigure server
   dynamic_reconfigure_server = new dynamic_reconfigure::Server<rosaria::RosAriaConfig>;
@@ -813,39 +837,28 @@ void RosAriaNode::publish()
     sonar_pub.publish(cloud);
   }*/
 
-  if(use_sonar)
+  if (use_sonar)
   {
     int i = 0;
     int j = 0;
     ArSensorReading* reading = NULL;
-    reading = robot->getSonarReading(9);
-    if(reading->getRange() > 4500)
+    if(sonars__crossed_the_streams)
     {
       i = 8;
       j = 8;
-      ROS_ERROR_THROTTLE(10000000, "NO FRONT SONAR ARRAY DETECTED!");
     }
     
-    sensor_msgs::Range range[16];
     for(; i < 16; i++)
     {
-      range[i].header.stamp = ros::Time::now();
-      range[i].radiation_type = 0;
-      range[i].field_of_view = 0.2618f; 
-      range[i].min_range = 0.03f;
-      range[i].max_range = 3.0f;
-      char str[15];
-      sprintf(str, "%d",i);
-      std::string _frame_id = "sonar";
-      _frame_id.append(str);
-      range[i].header.frame_id = _frame_id;
+      ranges.data[i].header.stamp = ros::Time::now();
       
       ArSensorReading* _reading = NULL;
       _reading = robot->getSonarReading(i-j);
-      int r = _reading->getRange();
-      range[i].range = r / 1000.0f;
-      range_pub[i].publish(range[i]);
-    } 
+      ranges.data[i].range = _reading->getRange() / 1000.0f;
+      range_pub[i].publish(ranges.data[i]);
+    }
+    ranges.header.stamp = ros::Time::now();
+    combined_range_pub.publish(ranges);
   }  
 }
 
