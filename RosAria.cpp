@@ -108,7 +108,7 @@ class RosAriaNode
     rosaria::GripperState gripperState;
     ArPose pos;
     ArFunctorC<RosAriaNode> myPublishCB;
-    //ArRobot::ChargeState batteryCharge;
+    ArRobot::ChargeState batteryCharge;
 
     //for odom->base_link transform
     tf::TransformBroadcaster odom_broadcaster;
@@ -287,8 +287,9 @@ bool RosAriaNode::hasSonarSubscribers()
 
 void RosAriaNode::sonarConnectCb()
 {
+  if (!ros::ok()) return;
   robot->lock();
-  if (hasSonarSubscribers() && !use_sonar)
+  if (hasSonarSubscribers())
   {
     robot->enableSonar();
     use_sonar = true;
@@ -298,8 +299,9 @@ void RosAriaNode::sonarConnectCb()
 
 void RosAriaNode::sonarDisconnectCb()
 {
+  if (!ros::ok()) return;
   robot->lock();
-  if (!hasSonarSubscribers() && use_sonar)
+  if (!hasSonarSubscribers())
   {
     robot->disableSonar();
     use_sonar = false;
@@ -308,7 +310,7 @@ void RosAriaNode::sonarDisconnectCb()
 }
 
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
-  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false), sonar_tf_array(), ranges(), setup_complete(false)
+  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false), sonar_tf_array(), ranges() 
 {
   sonar_listeners = 0;
   // read in config options
@@ -354,9 +356,9 @@ RosAriaNode::~RosAriaNode()
   // disable motors and sonar.
   robot->disableMotors();
   robot->disableSonar();
-
   robot->stopRunning();
   robot->waitForRunExit();
+  delete conn;
   Aria::shutdown();
 }
 
@@ -366,7 +368,6 @@ int RosAriaNode::Setup()
   // called once per instance, and these objects need to persist until the process terminates.
 
   robot = new ArRobot();
-  gripperManager = new ArGripper(robot);
 
   ArArgumentBuilder *args = new ArArgumentBuilder(); //  never freed
   ArArgumentParser *argparser = new ArArgumentParser(args); // Warning never freed
@@ -425,6 +426,7 @@ int RosAriaNode::Setup()
     return 1;
   }
 
+  gripperManager = new ArGripper(robot);
   if(gripperManager->getType() == ArGripper::NOGRIPPER)
   {
     use_gripper = false;
@@ -550,9 +552,7 @@ int RosAriaNode::Setup()
   // Enable the motors
   robot->enableMotors();
 
-  // disable sonars on startup, unless we already have subscribers
-  if (!use_sonar)
-    robot->disableSonar();
+  robot->disableSonar();
 
   // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
   robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
@@ -608,9 +608,9 @@ int RosAriaNode::Setup()
   open_service = n.advertiseService("open_gripper", &RosAriaNode::open_gripper_cb, this);
  
   veltime = ros::Time::now();
-  sonar_tf_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::sonarCallback, this);
+  sonar_tf_timer = n.createTimer(ros::Duration(0.033), &RosAriaNode::sonarCallback, this);
 #if 0
-  gripper_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::gripperCallback, this);
+  gripper_timer = n.createTimer(ros::Duration(0.033), &RosAriaNode::gripperCallback, this);
 #endif
 
 
@@ -624,17 +624,16 @@ void RosAriaNode::spin()
 
 void RosAriaNode::sonarCallback(const ros::TimerEvent &tick)
 {
-    ros::Time gameTime = ros::Time::now(); 
-    for(int i =0; i < 16; i++)
-    {
-      sonar_tf_array[i].header.stamp = gameTime;
-      gripper_broadcaster.sendTransform(sonar_tf_array[i]);
-    }
+  ros::Time gameTime = ros::Time::now(); 
+  for(int i =0; i < 16; i++)
+  {
+    sonar_tf_array[i].header.stamp = gameTime;
+    gripper_broadcaster.sendTransform(sonar_tf_array[i]);
+  }
 }
 
 void RosAriaNode::gripperCallback(const ros::TimerEvent &tick)
 {
-    if (!setup_complete) return;
     right_gripper_base_trans.header.stamp = ros::Time::now();
     right_gripper_end_trans.header.stamp = ros::Time::now();
     left_gripper_base_trans.header.stamp = ros::Time::now();
@@ -792,69 +791,6 @@ void RosAriaNode::publish()
 	motors_state_pub.publish(motors_state);
 	published_motors_state = true;
   }
-
-  // Publish sonar information, if enabled.
-  /*if (use_sonar) {
-    sensor_msgs::PointCloud cloud;	//sonar readings.
-    cloud.header.stamp = position.header.stamp;	//copy time.
-    // sonar sensors relative to base_link
-    cloud.header.frame_id = frame_id_sonar;
-    
-
-    // Log debugging info
-    std::stringstream sonar_debug_info;
-    sonar_debug_info << "Sonar readings: ";
-
-    ArSensorReading* _reading = NULL;
-    _reading = robot->getSonarReading(15);
-    int j = 0;
-    if(_reading->getRange() == 5000)
-    {
-      for(j = 0; j < 8; j++)
-      {
-        geometry_msgs::Point32 p;
-        p.x = 0.0; //reading->getLocalX() / 1000.0;
-        p.y = 0.0;//reading->getLocalY() / 1000.0;
-        p.z = 0.0;
-        cloud.points.push_back(p);
-      }
-    }
-    for (int i = 0; i < robot->getNumSonar() - j; i++) {
-      ArSensorReading* reading = NULL;
-      reading = robot->getSonarReading(i);
-      if(!reading) {
-        ROS_WARN("RosAria: Did not receive a sonar reading.");
-        continue;
-      }
-      
-      // getRange() will return an integer between 0 and 5000 (5m)
-      sonar_debug_info << reading->getRange() << " ";
-
-      // local (x,y). Appears to be from the centre of the robot, since values may
-      // exceed 5000. This is good, since it means we only need 1 transform.
-      // x & y seem to be swapped though, i.e. if the robot is driving north
-      // x is north/south and y is east/west.
-      //
-      ArPose sensor = reading->getSensorPosition();  //position of sensor.
-      //ROS_ERROR("( %d , %d ) from ");
-      // sonar_debug_info << "(" << reading->getLocalX() 
-      //                  << ", " << reading->getLocalY()
-      //                  << ") from (" << sensor.getX() << ", " 
-      //                  << sensor.getY() << ") ;; " ;
-      
-      //add sonar readings (robot-local coordinate frame) to cloud
-      //ArPose sensor = reading->getSensorPosition();
-      //ROS_ERROR()
-      geometry_msgs::Point32 p;
-      p.x = reading->getLocalX() / - 1000.0;
-      p.y = reading->getLocalY() / 1000.0;
-      p.z = 0.0;
-      cloud.points.push_back(p);
-    }
-    ROS_DEBUG_STREAM(sonar_debug_info.str());
-    
-    sonar_pub.publish(cloud);
-  }*/
 
   if (use_sonar)
   {
