@@ -135,8 +135,6 @@ class RosAriaNode
     bool sonars__crossed_the_streams; //true when rear sonars plugged into front port, and front sonars ignored
     bool use_gripper;
 
-    bool setup_complete; //postpone timers until setup is g2g
-
     // Debug Aria
     bool debug_aria;
     std::string aria_log_filename;
@@ -349,47 +347,6 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   // other argmuments (optional) are callbacks, or a boolean "latch" flag (whether to send current data to new
   // subscribers when they subscribe).
   // See ros::NodeHandle API docs.
-  pose_pub = n.advertise<nav_msgs::Odometry>("pose",1000);
-  bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
-  gripper_pub = n.advertise<rosaria::GripperState>("gripper_state",1000);
-  paddle_pub = n.advertise<rosaria::PaddleState>("paddle_state",1000);
-
-  voltage_pub = n.advertise<std_msgs::Float64>("battery_voltage", 1000);
-  
-  combined_range_pub = n.advertise<rosaria::RangeArray>("ranges", 1000,
-    boost::bind(&RosAriaNode::sonarConnectCb,this),
-    boost::bind(&RosAriaNode::sonarDisconnectCb, this));
-
-  for(int i =0; i < 16; i++) {
-    std::stringstream topic_name;
-    topic_name << "range" << i;
-    range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name.str().c_str(), 1000,
-            boost::bind(&RosAriaNode::sonarConnectCb, this),
-            boost::bind(&RosAriaNode::sonarDisconnectCb, this));
-  }
-  recharge_state_pub = n.advertise<std_msgs::Int8>("battery_recharge_state", 5, true /*latch*/ );
-  recharge_state.data = -2;
-  state_of_charge_pub = n.advertise<std_msgs::Float32>("battery_state_of_charge", 100);
-
-  motors_state_pub = n.advertise<std_msgs::Bool>("motors_state", 5, true /*latch*/ );
-  motors_state.data = false;
-  published_motors_state = false;
-  
-  // subscribe to services
-  cmdvel_sub = n.subscribe( "cmd_vel", 1, (boost::function <void(const geometry_msgs::TwistConstPtr&)>)
-    boost::bind(&RosAriaNode::cmdvel_cb, this, _1 ));
-
-  // advertise enable/disable services
-  enable_srv = n.advertiseService("enable_motors", &RosAriaNode::enable_motors_cb, this);
-  disable_srv = n.advertiseService("disable_motors", &RosAriaNode::disable_motors_cb, this);
-  raise_service = n.advertiseService("raise_gripper", &RosAriaNode::raise_gripper_cb, this);
-  open_service = n.advertiseService("open_gripper", &RosAriaNode::open_gripper_cb, this);
- 
-  veltime = ros::Time::now();
-  sonar_tf_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::sonarCallback, this);
-#if 0
-  gripper_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::gripperCallback, this);
-#endif
 }
 
 RosAriaNode::~RosAriaNode()
@@ -593,8 +550,9 @@ int RosAriaNode::Setup()
   // Enable the motors
   robot->enableMotors();
 
-  // disable sonars on startup
-  robot->disableSonar();
+  // disable sonars on startup, unless we already have subscribers
+  if (!use_sonar)
+    robot->disableSonar();
 
   // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
   robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
@@ -613,7 +571,48 @@ int RosAriaNode::Setup()
   currentPaddleState = paddleState.RAISED;
   height_target = 0.13;
 
-  setup_complete = true;
+  pose_pub = n.advertise<nav_msgs::Odometry>("pose",1000);
+  bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
+  gripper_pub = n.advertise<rosaria::GripperState>("gripper_state",1000);
+  paddle_pub = n.advertise<rosaria::PaddleState>("paddle_state",1000);
+
+  voltage_pub = n.advertise<std_msgs::Float64>("battery_voltage", 1000);
+  
+  combined_range_pub = n.advertise<rosaria::RangeArray>("ranges", 1000,
+    boost::bind(&RosAriaNode::sonarConnectCb,this),
+    boost::bind(&RosAriaNode::sonarDisconnectCb, this));
+
+  for(int i =0; i < 16; i++) {
+    std::stringstream topic_name;
+    topic_name << "range" << i;
+    range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name.str().c_str(), 1000,
+            boost::bind(&RosAriaNode::sonarConnectCb, this),
+            boost::bind(&RosAriaNode::sonarDisconnectCb, this));
+  }
+  recharge_state_pub = n.advertise<std_msgs::Int8>("battery_recharge_state", 5, true /*latch*/ );
+  recharge_state.data = -2;
+  state_of_charge_pub = n.advertise<std_msgs::Float32>("battery_state_of_charge", 100);
+
+  motors_state_pub = n.advertise<std_msgs::Bool>("motors_state", 5, true /*latch*/ );
+  motors_state.data = false;
+  published_motors_state = false;
+  
+  // subscribe to services
+  cmdvel_sub = n.subscribe( "cmd_vel", 1, (boost::function <void(const geometry_msgs::TwistConstPtr&)>)
+    boost::bind(&RosAriaNode::cmdvel_cb, this, _1 ));
+
+  // advertise enable/disable services
+  enable_srv = n.advertiseService("enable_motors", &RosAriaNode::enable_motors_cb, this);
+  disable_srv = n.advertiseService("disable_motors", &RosAriaNode::disable_motors_cb, this);
+  raise_service = n.advertiseService("raise_gripper", &RosAriaNode::raise_gripper_cb, this);
+  open_service = n.advertiseService("open_gripper", &RosAriaNode::open_gripper_cb, this);
+ 
+  veltime = ros::Time::now();
+  sonar_tf_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::sonarCallback, this);
+#if 0
+  gripper_timer = nh.createTimer(ros::Duration(0.033), &RosAriaNode::gripperCallback, this);
+#endif
+
 
   return 0;
 }
@@ -625,7 +624,6 @@ void RosAriaNode::spin()
 
 void RosAriaNode::sonarCallback(const ros::TimerEvent &tick)
 {
-    if (!setup_complete) return;
     ros::Time gameTime = ros::Time::now(); 
     for(int i =0; i < 16; i++)
     {
