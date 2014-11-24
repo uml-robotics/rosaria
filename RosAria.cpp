@@ -53,6 +53,7 @@ class RosAriaNode
     void sonarDisconnectCb();
     void dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t level);
     void readParameters();
+    void cleanup();
     
   protected:
     ros::NodeHandle n;
@@ -351,15 +352,23 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   // See ros::NodeHandle API docs.
 }
 
+void RosAriaNode::cleanup()
+{
+  if (robot != NULL) {
+      // disable motors and sonar.
+      robot->disableMotors();
+      robot->disableSonar();
+      robot->stopRunning();
+      robot->waitForRunExit();
+      delete conn;
+      delete robot;
+  }
+  Aria::shutdown();
+}
+
 RosAriaNode::~RosAriaNode()
 {
-  // disable motors and sonar.
-  robot->disableMotors();
-  robot->disableSonar();
-  robot->stopRunning();
-  robot->waitForRunExit();
-  delete conn;
-  Aria::shutdown();
+  cleanup();
 }
 
 int RosAriaNode::Setup()
@@ -896,14 +905,25 @@ RosAriaNode::cmdvel_cb( const geometry_msgs::TwistConstPtr &msg)
     (double) msg->linear.x * 1e3, (double) msg->linear.y * 1.3, (double) msg->angular.z * 180/M_PI);
 }
 
+RosAriaNode *node = NULL;
+
+void mySigintHandler(int sig)
+{
+    if (node != NULL) {
+      node->cleanup();
+      delete node;
+    }
+    ros::shutdown();
+}
 
 int main( int argc, char** argv )
 {
   ros::init(argc,argv, "RosAria");
   ros::NodeHandle n(std::string("~"));
+  signal(SIGINT, mySigintHandler);
   Aria::init();
 
-  RosAriaNode *node = new RosAriaNode(n);
+  node = new RosAriaNode(n);
 
   if( node->Setup() != 0 )
   {
@@ -912,8 +932,6 @@ int main( int argc, char** argv )
   }
 
   node->spin();
-
-  delete node;
 
   ROS_INFO( "RosAria: Quitting... \n" );
   return 0;
