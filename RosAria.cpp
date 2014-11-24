@@ -110,6 +110,7 @@ class RosAriaNode
     ArPose pos;
     ArFunctorC<RosAriaNode> myPublishCB;
     ArRobot::ChargeState batteryCharge;
+    ArSonarDevice *sonarDevice;
 
     //for odom->base_link transform
     tf::TransformBroadcaster odom_broadcaster;
@@ -311,7 +312,7 @@ void RosAriaNode::sonarDisconnectCb()
 }
 
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
-  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false), sonar_tf_array(), ranges() 
+  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false), sonar_tf_array(), ranges(), sonarDevice(NULL)
 {
   sonar_listeners = 0;
   // read in config options
@@ -355,11 +356,21 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
 void RosAriaNode::cleanup()
 {
   if (robot != NULL) {
+      robot->remSensorInterpTask("ROSPublishingTask");
+      robot->remRangeDevice(sonarDevice);
       // disable motors and sonar.
+      ROS_INFO("DISABLING MOTORS");
       robot->disableMotors();
+      ROS_INFO("DISABLED MOTORS");
+      ROS_INFO("DISABLING SONAR");
       robot->disableSonar();
+      ROS_INFO("DISABLED SONAR");
+      ROS_INFO("JOINING");
       robot->stopRunning();
+      ROS_INFO("JOINED");
+      ROS_INFO("WAITING");
       robot->waitForRunExit();
+      ROS_INFO("GTFO");
       delete conn;
       delete robot;
   }
@@ -420,7 +431,6 @@ int RosAriaNode::Setup()
     ArLog::init(ArLog::File, ArLog::Verbose, aria_log_filename.c_str(), true);
   }
 
-
   // Connect to the robot
   conn = new ArRobotConnector(argparser, robot); // warning never freed
   if (!conn->connectRobot()) {
@@ -435,13 +445,15 @@ int RosAriaNode::Setup()
     return 1;
   }
 
+  sonarDevice = new ArSonarDevice();
+  robot->addRangeDevice(sonarDevice);
+
   gripperManager = new ArGripper(robot);
   if(gripperManager->getType() == ArGripper::NOGRIPPER)
   {
     use_gripper = false;
     ArLog::log(ArLog::Terse, "gripperExample: Error: Robot does not have a gripper. Exiting.");
-    Aria::shutdown();
-    return -1;
+    Aria::exit(1);
   }
   else
   {
@@ -905,25 +917,13 @@ RosAriaNode::cmdvel_cb( const geometry_msgs::TwistConstPtr &msg)
     (double) msg->linear.x * 1e3, (double) msg->linear.y * 1.3, (double) msg->angular.z * 180/M_PI);
 }
 
-RosAriaNode *node = NULL;
-
-void mySigintHandler(int sig)
-{
-    if (node != NULL) {
-      node->cleanup();
-      delete node;
-    }
-    ros::shutdown();
-}
-
 int main( int argc, char** argv )
 {
   ros::init(argc,argv, "RosAria");
   ros::NodeHandle n(std::string("~"));
-  signal(SIGINT, mySigintHandler);
   Aria::init();
 
-  node = new RosAriaNode(n);
+  RosAriaNode *node = new RosAriaNode(n);
 
   if( node->Setup() != 0 )
   {
@@ -932,6 +932,11 @@ int main( int argc, char** argv )
   }
 
   node->spin();
+
+  if (node != NULL) {
+    node->cleanup();
+    delete node;
+  }
 
   ROS_INFO( "RosAria: Quitting... \n" );
   return 0;
