@@ -25,10 +25,6 @@
 #include "std_srvs/Empty.h"
 #include "sensor_msgs/Range.h"
 #include "rosaria/RangeArray.h"
-#include "rosaria/openGripper.h"
-#include "rosaria/raiseGripper.h"
-#include "rosaria/GripperState.h"
-#include "rosaria/PaddleState.h"
 #include <sstream>
 
 // Node that interfaces between ROS and mobile robot base features via ARIA library. 
@@ -59,8 +55,6 @@ class RosAriaNode
     ros::NodeHandle n;
     ros::Publisher pose_pub;
     ros::Publisher bumpers_pub;
-    ros::Publisher gripper_pub;
-    ros::Publisher paddle_pub;
     ros::Publisher sonar_pub;
     ros::Publisher voltage_pub;
     ros::Publisher range_pub[16];
@@ -77,65 +71,43 @@ class RosAriaNode
 
     ros::Subscriber cmdvel_sub;
 
-    ros::Timer gripper_timer;
     ros::Timer sonar_tf_timer;
-    void gripperCallback(const ros::TimerEvent &);
     void sonarCallback(const ros::TimerEvent &);
 
     ros::ServiceServer enable_srv;
     ros::ServiceServer disable_srv;
-    ros::ServiceServer raise_service;
-    ros::ServiceServer open_service;
     bool enable_motors_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response);
     bool disable_motors_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response);
-    bool open_gripper_cb(rosaria::openGripper::Request& request, rosaria::openGripper::Response& response);
-    bool raise_gripper_cb(rosaria::raiseGripper::Request& request, rosaria::raiseGripper::Response& response);
 
     ros::Time veltime;
 
     std::string serial_port;
     int serial_baud;
-    int currentPaddleState;
-    int sonar_listeners;
-    double right_target, left_target, height_target;
-    double right_current, left_current, height_current;
 
     ArRobotConnector *conn;
     ArRobot *robot;
-    ArGripper *gripperManager;
     nav_msgs::Odometry position;
     rosaria::BumperState bumpers;
-    rosaria::PaddleState paddleState;
-    rosaria::GripperState gripperState;
     ArPose pos;
     ArFunctorC<RosAriaNode> myPublishCB;
     ArRobot::ChargeState batteryCharge;
-    ArSonarDevice *sonarDevice;
 
     //for odom->base_link transform
     tf::TransformBroadcaster odom_broadcaster;
-    tf::TransformBroadcaster gripper_broadcaster;
     geometry_msgs::TransformStamped odom_trans;
 
     rosaria::RangeArray ranges;
     geometry_msgs::TransformStamped sonar_tf_array[16];
-    
-    geometry_msgs::TransformStamped right_gripper_base_trans;
-    geometry_msgs::TransformStamped right_gripper_end_trans;
-    geometry_msgs::TransformStamped left_gripper_base_trans;
-    geometry_msgs::TransformStamped left_gripper_end_trans;
+
     //for resolving tf names.
     std::string tf_prefix;
     std::string frame_id_odom;
     std::string frame_id_base_link;
     std::string frame_id_bumper;
     std::string frame_id_sonar;
-    std::string frame_id_gripper;
 
     //Sonar support
-    bool use_sonar;  // enable and publish sonars
     bool sonars__crossed_the_streams; //true when rear sonars plugged into front port, and front sonars ignored
-    bool use_gripper;
 
     // Debug Aria
     bool debug_aria;
@@ -287,37 +259,11 @@ bool RosAriaNode::hasSonarSubscribers()
     return count > 0;
 }
 
-void RosAriaNode::sonarConnectCb()
-{
-  if (!ros::ok()) return;
-  robot->lock();
-  if (hasSonarSubscribers())
-  {
-    robot->enableSonar();
-    use_sonar = true;
-  }
-  robot->unlock();
-}
-
-void RosAriaNode::sonarDisconnectCb()
-{
-  if (!ros::ok()) return;
-  robot->lock();
-  if (!hasSonarSubscribers())
-  {
-    robot->disableSonar();
-    use_sonar = false;
-  }
-  robot->unlock();
-}
-
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
-  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), use_sonar(false), use_gripper(false), sonar_tf_array(), ranges(), sonarDevice(NULL)
+  myPublishCB(this, &RosAriaNode::publish), serial_port(""), serial_baud(0), sonar_tf_array(), ranges()
 {
-  sonar_listeners = 0;
   // read in config options
   n = nh;
-  currentPaddleState = paddleState.RAISED;
   // !!! port !!!
   n.param( "port", serial_port, std::string("/dev/ttyUSB0") );
   ROS_INFO( "RosAria: using port: [%s]", serial_port.c_str() );
@@ -357,20 +303,10 @@ void RosAriaNode::cleanup()
 {
   if (robot != NULL) {
       robot->remSensorInterpTask("ROSPublishingTask");
-      robot->remRangeDevice(sonarDevice);
       // disable motors and sonar.
-      ROS_INFO("DISABLING MOTORS");
       robot->disableMotors();
-      ROS_INFO("DISABLED MOTORS");
-      ROS_INFO("DISABLING SONAR");
       robot->disableSonar();
-      ROS_INFO("DISABLED SONAR");
-      ROS_INFO("JOINING");
       robot->stopRunning();
-      ROS_INFO("JOINED");
-      ROS_INFO("WAITING");
-      robot->waitForRunExit();
-      ROS_INFO("GTFO");
       delete conn;
       delete robot;
   }
@@ -445,29 +381,7 @@ int RosAriaNode::Setup()
     return 1;
   }
 
-  sonarDevice = new ArSonarDevice();
-  robot->addRangeDevice(sonarDevice);
-
-  gripperManager = new ArGripper(robot);
-  if(gripperManager->getType() == ArGripper::NOGRIPPER)
-  {
-    use_gripper = false;
-    ArLog::log(ArLog::Terse, "gripperExample: Error: Robot does not have a gripper. Exiting.");
-    Aria::exit(1);
-  }
-  else
-  {
-    use_gripper = true;
-  }
-
-  right_gripper_base_trans.header.frame_id = "base_link";
-  right_gripper_base_trans.child_frame_id = "right_gripper_base";
-  right_gripper_end_trans.header.frame_id = "right_gripper_base";
-  right_gripper_end_trans.child_frame_id = "right_gripper_end";
-  left_gripper_base_trans.header.frame_id = "base_link";
-  left_gripper_base_trans.child_frame_id = "left_gripper_base";
-  left_gripper_end_trans.header.frame_id = "left_gripper_base";
-  left_gripper_end_trans.child_frame_id = "left_gripper_end";
+  readParameters();
 
   for(int i = 0; i < 16; i++)
   {
@@ -483,15 +397,6 @@ int RosAriaNode::Setup()
     sonar_tf_array[i].transform.rotation = tf::createQuaternionMsgFromYaw(_reading->getSensorTh() * M_PI / 180.0);
   }
 
-  right_target = 0.03;
-  left_target = -0.03;
-  height_target = 0.1;
-  
-  right_current = 0.03;
-  left_current = -0.03;
-  height_current = 0.1;
-
-  readParameters();
   for (int i=0;i<16;i++) {
       sensor_msgs::Range r;
       ranges.data.push_back(r);
@@ -573,7 +478,7 @@ int RosAriaNode::Setup()
   // Enable the motors
   robot->enableMotors();
 
-  robot->disableSonar();
+  robot->enableSonar();
 
   // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
   robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
@@ -585,30 +490,17 @@ int RosAriaNode::Setup()
   // Run ArRobot background processing thread
   robot->runAsync(true);
 
-  gripperManager->gripperStore();
-  right_target = 0.03;
-  left_target = -0.03;
-
-  currentPaddleState = paddleState.RAISED;
-  height_target = 0.13;
-
   pose_pub = n.advertise<nav_msgs::Odometry>("pose",1000);
   bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
-  gripper_pub = n.advertise<rosaria::GripperState>("gripper_state",1000);
-  paddle_pub = n.advertise<rosaria::PaddleState>("paddle_state",1000);
 
   voltage_pub = n.advertise<std_msgs::Float64>("battery_voltage", 1000);
   
-  combined_range_pub = n.advertise<rosaria::RangeArray>("ranges", 1000,
-    boost::bind(&RosAriaNode::sonarConnectCb,this),
-    boost::bind(&RosAriaNode::sonarDisconnectCb, this));
+  combined_range_pub = n.advertise<rosaria::RangeArray>("ranges", 1000);
 
   for(int i =0; i < 16; i++) {
     std::stringstream topic_name;
     topic_name << "range" << i;
-    range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name.str().c_str(), 1000,
-            boost::bind(&RosAriaNode::sonarConnectCb, this),
-            boost::bind(&RosAriaNode::sonarDisconnectCb, this));
+    range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name.str().c_str(), 1000);
   }
   recharge_state_pub = n.advertise<std_msgs::Int8>("battery_recharge_state", 5, true /*latch*/ );
   recharge_state.data = -2;
@@ -625,15 +517,9 @@ int RosAriaNode::Setup()
   // advertise enable/disable services
   enable_srv = n.advertiseService("enable_motors", &RosAriaNode::enable_motors_cb, this);
   disable_srv = n.advertiseService("disable_motors", &RosAriaNode::disable_motors_cb, this);
-  raise_service = n.advertiseService("raise_gripper", &RosAriaNode::raise_gripper_cb, this);
-  open_service = n.advertiseService("open_gripper", &RosAriaNode::open_gripper_cb, this);
  
   veltime = ros::Time::now();
   sonar_tf_timer = n.createTimer(ros::Duration(0.033), &RosAriaNode::sonarCallback, this);
-#if 0
-  gripper_timer = n.createTimer(ros::Duration(0.033), &RosAriaNode::gripperCallback, this);
-#endif
-
 
   return 0;
 }
@@ -649,69 +535,8 @@ void RosAriaNode::sonarCallback(const ros::TimerEvent &tick)
   for(int i =0; i < 16; i++)
   {
     sonar_tf_array[i].header.stamp = gameTime;
-    gripper_broadcaster.sendTransform(sonar_tf_array[i]);
+    odom_broadcaster.sendTransform(sonar_tf_array[i]);
   }
-}
-
-void RosAriaNode::gripperCallback(const ros::TimerEvent &tick)
-{
-    right_gripper_base_trans.header.stamp = ros::Time::now();
-    right_gripper_end_trans.header.stamp = ros::Time::now();
-    left_gripper_base_trans.header.stamp = ros::Time::now();
-    left_gripper_end_trans.header.stamp = ros::Time::now();
-
-    if(right_current < right_target )
-    {
-      right_current += 0.005;
-    }
-    else if(right_current > right_target + 0.005)
-    {
-      right_current -= 0.005;
-    }
- 
-    if(left_current < left_target )
-    {
-      left_current += 0.005;
-    }
-    else if(left_current > left_target + 0.005)
-    {
-      left_current -= 0.005;
-    }
-    bool moving = false;
-  
-    if(height_current < height_target)
-    {
-      height_current += 0.0008;
-      moving = true;
-    }
-    else if (height_current > height_target + 0.0008)
-    {
-      height_current -= 0.0008;
-      moving = true;
-    }
-   
-    right_gripper_base_trans.transform.translation.y = right_current;
-    left_gripper_base_trans.transform.translation.y = left_current;
-    right_gripper_base_trans.transform.translation.z = height_current;
-    left_gripper_base_trans.transform.translation.z = height_current;
-
-    gripper_broadcaster.sendTransform(right_gripper_base_trans);
-    gripper_broadcaster.sendTransform(right_gripper_end_trans);
-    gripper_broadcaster.sendTransform(left_gripper_base_trans);
-    gripper_broadcaster.sendTransform(left_gripper_end_trans);
-
-    gripperState.state = gripperManager->getGripState();
-    if (moving)
-    {
-      paddleState.state = paddleState.MOVING;
-    }
-    else
-    {
-      paddleState.state = currentPaddleState;
-    }
-    gripper_pub.publish(gripperState);
-    paddle_pub.publish(paddleState);
-
 }
 
 void RosAriaNode::publish()
@@ -813,7 +638,7 @@ void RosAriaNode::publish()
 	published_motors_state = true;
   }
 
-  if (use_sonar)
+  if (robot->areSonarsEnabled())
   {
     int i = 0;
     int j = 0;
@@ -837,45 +662,6 @@ void RosAriaNode::publish()
     combined_range_pub.publish(ranges);
   }  
 }
-
-
-bool RosAriaNode::open_gripper_cb(rosaria::openGripper::Request& request, rosaria::openGripper::Response& response)
-{
-  ROS_INFO("REQUEST TO OPEN GRIPPER");
-  if(request.open)
-  {
-      gripperManager->gripOpen();
-      right_target = 0.13;
-      left_target = -0.13;
-  }
-  else
-  {
-      gripperManager->gripClose();
-      right_target = 0.03;
-      left_target = -0.03;
-  }
-
- return true;
-}
-
-bool RosAriaNode::raise_gripper_cb(rosaria::raiseGripper::Request& request, rosaria::raiseGripper::Response& response)
-{
-  ROS_INFO("REQUEST TO RAISE GRIPPER");
-  if(request.raise)
-  {
-    gripperManager->liftUp();
-    currentPaddleState = paddleState.RAISED;
-    height_target = 0.13;
-  }
-  else
-  {
-    gripperManager->liftDown();
-    currentPaddleState = paddleState.LOWERED;
-    height_target = 0.1;
-  }
-  return true;
-}
-
 
 bool RosAriaNode::enable_motors_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response)
 {
