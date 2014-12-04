@@ -480,15 +480,9 @@ int RosAriaNode::Setup()
 
   robot->enableSonar();
 
-  // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
-  robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
-
   // Initialize bumpers with robot number of bumpers
   bumpers.front_bumpers.resize(robot->getNumFrontBumpers());
   bumpers.rear_bumpers.resize(robot->getNumRearBumpers());
-
-  // Run ArRobot background processing thread
-  robot->runAsync(true);
 
   pose_pub = n.advertise<nav_msgs::Odometry>("pose",1000);
   bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
@@ -520,6 +514,12 @@ int RosAriaNode::Setup()
  
   veltime = ros::Time::now();
   sonar_tf_timer = n.createTimer(ros::Duration(0.033), &RosAriaNode::sonarCallback, this);
+
+  // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
+  robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
+
+  // Run ArRobot background processing thread
+  robot->runAsync(true);
 
   return 0;
 }
