@@ -106,8 +106,12 @@ class RosAriaNode
     std::string frame_id_bumper;
     std::string frame_id_sonar;
 
+    void sonarConnectCB();
+    void sonarDisconnectCB();
+
     //Sonar support
     bool sonars__crossed_the_streams; //true when rear sonars plugged into front port, and front sonars ignored
+    bool use_sonar;
 
     // Debug Aria
     bool debug_aria;
@@ -478,7 +482,7 @@ int RosAriaNode::Setup()
   // Enable the motors
   robot->enableMotors();
 
-  robot->enableSonar();
+  robot->disableSonar();
 
   // Initialize bumpers with robot number of bumpers
   bumpers.front_bumpers.resize(robot->getNumFrontBumpers());
@@ -489,12 +493,16 @@ int RosAriaNode::Setup()
 
   voltage_pub = n.advertise<std_msgs::Float64>("battery_voltage", 1000);
   
-  combined_range_pub = n.advertise<rosaria::RangeArray>("ranges", 1000);
+  combined_range_pub = n.advertise<rosaria::RangeArray>("ranges", 1000,
+    boost::bind(&RosAriaNode::sonarConnectCb,this),
+    boost::bind(&RosAriaNode::sonarDisconnectCb, this));
 
   for(int i =0; i < 16; i++) {
     std::stringstream topic_name;
     topic_name << "range" << i;
-    range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name.str().c_str(), 1000);
+    range_pub[i] = n.advertise<sensor_msgs::Range>(topic_name.str().c_str(), 1000,
+      boost::bind(&RosAriaNode::sonarConnectCb,this),
+      boost::bind(&RosAriaNode::sonarDisconnectCb, this));
   }
   recharge_state_pub = n.advertise<std_msgs::Int8>("battery_recharge_state", 5, true /*latch*/ );
   recharge_state.data = -2;
@@ -514,6 +522,7 @@ int RosAriaNode::Setup()
  
   veltime = ros::Time::now();
   sonar_tf_timer = n.createTimer(ros::Duration(0.033), &RosAriaNode::sonarCallback, this);
+  sonar_tf_timer.stop();
 
   // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
   robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
@@ -522,6 +531,28 @@ int RosAriaNode::Setup()
   robot->runAsync(true);
 
   return 0;
+}
+
+void RosAriaNode::sonarConnectCb()
+{
+  robot->lock();
+  if (!robot->areSonarsEnabled())
+  {
+    robot->enableSonar();
+    sonar_tf_timer.start();
+  }
+  robot->unlock();
+}
+
+void RosAriaNode::sonarDisconnectCb()
+{
+  robot->lock();
+  if (robot->areSonarsEnabled())
+  {
+    robot->disableSonar();
+    sonar_tf_timer.stop();
+  }
+  robot->unlock();
 }
 
 void RosAriaNode::spin()
