@@ -288,11 +288,10 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   // will result in the frame_ids being set to /MyRobot/odom etc,
   // rather than /odom. This is useful for Multi Robot Systems.
   // See ROS Wiki for further details.
-  tf_prefix = tf::getPrefixParam(n);
-  frame_id_odom = tf::resolve(tf_prefix, "odom");
-  frame_id_base_link = tf::resolve(tf_prefix, "base_link");
-  frame_id_bumper = tf::resolve(tf_prefix, "bumpers_frame");
-  frame_id_sonar = tf::resolve(tf_prefix, "sonar_frame");
+  frame_id_odom = "odom";
+  frame_id_base_link = "base_link";
+  frame_id_bumper = "bumpers_frame";
+  frame_id_sonar = "sonar_frame";
 
   ranges.header.frame_id = frame_id_base_link;
 
