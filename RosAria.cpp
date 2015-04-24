@@ -527,7 +527,7 @@ int RosAriaNode::Setup()
 
   robot->unlock();
 
-  setDynParam("trans_accel", dynConf_default.trans_accel);
+/*  setDynParam("trans_accel", dynConf_default.trans_accel);
   setDynParam("trans_decel", dynConf_default.trans_decel);
   setDynParam("rot_accel", dynConf_default.rot_accel);
   setDynParam("rot_decel", dynConf_default.rot_decel);
@@ -535,7 +535,7 @@ int RosAriaNode::Setup()
   setDynParam("rot_vel_max", dynConf_default.rot_vel_max);
   setDynParam("TicksMM", TicksMM);
   setDynParam("DriftFactor", DriftFactor);
-  setDynParam("RevCount", RevCount);
+  setDynParam("RevCount", RevCount);*/
 
   pose_pub = n.advertise<nav_msgs::Odometry>("pose",1000);
   bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
