@@ -88,6 +88,7 @@ class RosAriaNode
     boost::mutex paramqueue_mutex_;
     std::queue<dynamic_reconfigure::Config> paramqueue_;
     void _setDynParams(); //queue work thread
+    rosaria::RosAriaConfig dynConf_default;
 
     ros::Time veltime;
 
@@ -154,21 +155,21 @@ void RosAriaNode::_setDynParams()
         paramqueue_.pop();
         //ROS_INFO("Popped a dynamicreconfigure config.... need to set it or die trying. %d remaining", paramqueue_.size());
       }
-      if (empty)
-        break;
     }
     else
     {
       sleep(0.5);
       continue;
     }
+    if (empty)
+      break;
     srv_req.config = cfg;
     if (!ros::service::call("~set_parameters", srv_req, srv_resp))
       ROS_ERROR("parameter set failed");
-    /*else
-      ROS_INFO("parameter set succeeded");*/
+    //else
+    //  ROS_INFO("parameter set succeeded");
   }
-  //ROS_INFO("Param set worker done working");
+  ROS_INFO("Param set worker done working");
 }
 
 void RosAriaNode::setDynParam(std::string key, int value)
@@ -180,11 +181,9 @@ void RosAriaNode::setDynParam(std::string key, int value)
   conf.ints.push_back(parm);
   {
     boost::mutex::scoped_lock l(paramqueue_mutex_);
-    //ROS_INFO("Enqueueing a dynparam set. %d in queue previously", (int)paramqueue_.size());
+    //ROS_INFO("Enqueueing setting %s to %d.. %d in queue previously", key.c_str(), value, (int)paramqueue_.size());
     bool empty = paramqueue_.empty();
     paramqueue_.push(conf);
-    if (param_thread_.joinable() && empty)
-      param_thread_.join();
     if (empty)
       param_thread_ = boost::thread(&RosAriaNode::_setDynParams, this);
   }
@@ -198,11 +197,9 @@ void RosAriaNode::setDynParam(std::string key, double value)
   conf.doubles.push_back(parm);
   {
     boost::mutex::scoped_lock l(paramqueue_mutex_);
-    //ROS_INFO("Enqueueing a dynparam set. %d in queue previously", (int)paramqueue_.size());
+    //ROS_INFO("Enqueueing setting %s to %f. %d in queue previously", key.c_str(), value, (int)paramqueue_.size());
     bool empty = paramqueue_.empty();
     paramqueue_.push(conf);
-    if (param_thread_.joinable() && empty)
-      param_thread_.join();
     if (empty)
       param_thread_ = boost::thread(&RosAriaNode::_setDynParams, this);
   }
@@ -210,7 +207,7 @@ void RosAriaNode::setDynParam(std::string key, double value)
 
 void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t level)
 {
-  ROS_INFO("Dynamic reconfigure callback fired!");
+  //ROS_INFO("Dynamic reconfigure callback fired!");
   //
   // Odometry Settings
   //
@@ -236,6 +233,12 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
     robot->comInt(88, RevCount);
   }
   
+  ////
+  ////  WHEN ROSPARAM INITIALIZES WITH THE DEFAULT VALUES, IT FILLS IN ONE NON-ZERO VALUE AT A TIME
+  ////  CONSEQUENTLY, THE SAME _CORRECT_ VALUE IS SET TO MAKE SURE THAT parameter_updates, AND ROSPARAM
+  ////  ALL REFLECT THE PROGRAMATICALLY SET DEFAULT VALUES AFTER INITIALIZATION COMPLETES
+  ////
+
   //
   // Acceleration Parameters
   //
@@ -243,44 +246,58 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
   value = config.trans_accel * 1000.0;
   if(value != robot->getTransAccel() and value > 0)
   {
-    ROS_INFO("Setting TransAccel from Dynamic Reconfigure: %f", value);
+    ROS_INFO("Setting TransAccel from Dynamic Reconfigure: %f m/s^2", config.trans_accel);
     robot->setTransAccel(value);
   }
-  
+  else if (value == 0)
+    setDynParam("trans_accel", dynConf_default.trans_accel); 
+
   value = config.trans_decel * 1000.0;
   if(value != robot->getTransDecel() and value > 0)
   {
-    ROS_INFO("Setting TransDecel from Dynamic Reconfigure: %f", value);
+    ROS_INFO("Setting TransDecel from Dynamic Reconfigure: %f m/s^2", config.trans_decel);
     robot->setTransDecel(value);
-  } 
+  }
+  else if (value == 0)
+    setDynParam("trans_decel", dynConf_default.trans_decel);
   
   value = config.rot_accel * 180.0/M_PI;
   if(value != robot->getRotAccel() and value > 0)
   {
-    ROS_INFO("Setting RotAccel from Dynamic Reconfigure: %f", value);
+    ROS_INFO("Setting RotAccel from Dynamic Reconfigure: %f radians/s^2", config.rot_accel);
     robot->setRotAccel(value);
   }
+  else if (value == 0)
+    setDynParam("rot_accel", dynConf_default.rot_accel);
   
   value = config.rot_decel * 180.0/M_PI;
   if(value != robot->getRotDecel() and value > 0)
   {
-    ROS_INFO("Setting RotDecel from Dynamic Reconfigure: %f", value);
+    ROS_INFO("Setting RotDecel from Dynamic Reconfigure: %f radians/s^2", config.rot_decel);
     robot->setRotDecel(value);
   } 
+  else if (value == 0)
+    setDynParam("rot_decel", dynConf_default.rot_decel);
 
   value = config.rot_vel_max * 180.0/M_PI;
   if(value != robot->getRotVelMax() and value > 0)
   {
-    ROS_INFO("Setting RotVelMax from Dynamic Reconfigure: %f", value);
+    ROS_INFO("Setting RotVelMax from Dynamic Reconfigure: %f radians/s", config.rot_vel_max);
     robot->setRotVelMax(value);
   }
+  else if (value == 0)
+    setDynParam("rot_vel_max", dynConf_default.rot_vel_max);
 
   value=config.trans_vel_max * 1000.0;
   if (value != robot->getTransVelMax() and value > 0)
   {
-    ROS_INFO("Setting TransVelMax from Dynamic Reconfigure: %f", value);
+    ROS_INFO("Setting TransVelMax from Dynamic Reconfigure: %f m/s", config.trans_vel_max);
     robot->setTransVelMax(value);
   }
+  else if (value == 0)
+    setDynParam("trans_vel_max", dynConf_default.trans_vel_max);
+
+  robot->unlock();
 }
 
 bool RosAriaNode::hasSonarSubscribers()
@@ -458,13 +475,32 @@ int RosAriaNode::Setup()
   dynConf_max.RevCount    = 32760;
   
   dynamic_reconfigure_server->setConfigMax(dynConf_max);
-  rosaria::RosAriaConfig dynConf_default;
+
+
   dynConf_default.trans_vel_max = robot->getTransVelMax() / 1000.0; 
   dynConf_default.rot_vel_max = robot->getRotVelMax() *M_PI/180.0; 
   dynConf_default.trans_accel = robot->getTransAccel() / 1000.0;
   dynConf_default.trans_decel = robot->getTransDecel() / 1000.0;
   dynConf_default.rot_accel   = robot->getRotAccel() * M_PI/180.0;
   dynConf_default.rot_decel   = robot->getRotDecel() * M_PI/180.0;
+
+/*  ROS_ERROR("ON ROBOT NOW\n\
+Trans vel max: %f\n\
+Rot vel max: %f\n\
+\n\
+trans accel: %f\n\
+trans decel: %f\n\
+rot accel: %f\n\
+rot decel: %f", robot->getTransVelMax(), robot->getRotVelMax(), robot->getTransAccel(), robot->getTransDecel(), robot->getRotAccel(), robot->getRotDecel());
+
+  ROS_ERROR("IN DEFAULT CONFIG\n\
+Trans vel max: %f\n\
+Rot vel max: %f\n\
+\n\
+trans accel: %f\n\
+trans decel: %f\n\
+rot accel: %f\n\
+rot decel: %f\n", dynConf_default.trans_vel_max,  dynConf_default.rot_vel_max, dynConf_default.trans_accel, dynConf_default.trans_decel, dynConf_default.rot_accel, dynConf_default.rot_decel);*/
 
   TicksMM = robot->getOrigRobotConfig()->getTicksMM();
   DriftFactor = robot->getOrigRobotConfig()->getDriftFactor();
@@ -490,10 +526,6 @@ int RosAriaNode::Setup()
     sonar_tf_array[i].transform.rotation = tf::createQuaternionMsgFromYaw(_reading->getSensorTh() * M_PI / 180.0);
   }
 
-  robot->unlock();
-
-  dynamic_reconfigure_server->setCallback(boost::bind(&RosAriaNode::dynamic_reconfigureCB, this, _1, _2));
-
   for (int i=0;i<16;i++) {
       sensor_msgs::Range r;
       ranges.data.push_back(r);
@@ -515,7 +547,6 @@ int RosAriaNode::Setup()
     ranges.data[i].max_range = 5.0f;
   }
 
-
   // Enable the motors
   robot->enableMotors();
 
@@ -526,16 +557,6 @@ int RosAriaNode::Setup()
   bumpers.rear_bumpers.resize(robot->getNumRearBumpers());
 
   robot->unlock();
-
-/*  setDynParam("trans_accel", dynConf_default.trans_accel);
-  setDynParam("trans_decel", dynConf_default.trans_decel);
-  setDynParam("rot_accel", dynConf_default.rot_accel);
-  setDynParam("rot_decel", dynConf_default.rot_decel);
-  setDynParam("trans_vel_max", dynConf_default.trans_vel_max);
-  setDynParam("rot_vel_max", dynConf_default.rot_vel_max);
-  setDynParam("TicksMM", TicksMM);
-  setDynParam("DriftFactor", DriftFactor);
-  setDynParam("RevCount", RevCount);*/
 
   pose_pub = n.advertise<nav_msgs::Odometry>("pose",1000);
   bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
@@ -572,6 +593,8 @@ int RosAriaNode::Setup()
   veltime = ros::Time::now();
   sonar_tf_timer = n.createTimer(ros::Duration(0.033), &RosAriaNode::sonarCallback, this);
   sonar_tf_timer.stop();
+
+  dynamic_reconfigure_server->setCallback(boost::bind(&RosAriaNode::dynamic_reconfigureCB, this, _1, _2));
 
   // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
   robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
