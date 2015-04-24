@@ -214,7 +214,7 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
   //
   // Odometry Settings
   //
-  bool locked_already = robot->tryLock();
+  robot->lock();
   if(TicksMM != config.TicksMM and config.TicksMM > 0)
   {
     ROS_INFO("Setting TicksMM from Dynamic Reconfigure: %d -> %d ", TicksMM, config.TicksMM);
@@ -254,22 +254,6 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
     robot->setTransDecel(value);
   } 
   
-  value = config.lat_accel * 1000.0;
-  if(value != robot->getLatAccel() and value > 0)
-  {
-    ROS_INFO("Setting LatAccel from Dynamic Reconfigure: %f", value);
-    if (robot->getAbsoluteMaxLatAccel() > 0 )
-      robot->setLatAccel(value);
-  }
-  
-  value = config.lat_decel * 1000.0;
-  if(value != robot->getLatDecel() and value > 0)
-  {
-    ROS_INFO("Setting LatDecel from Dynamic Reconfigure: %f", value);
-    if (robot->getAbsoluteMaxLatDecel() > 0 )
-      robot->setLatDecel(value);
-  }
-  
   value = config.rot_accel * 180.0/M_PI;
   if(value != robot->getRotAccel() and value > 0)
   {
@@ -297,8 +281,6 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
     ROS_INFO("Setting TransVelMax from Dynamic Reconfigure: %f", value);
     robot->setTransVelMax(value);
   }
-  if (locked_already)
-    robot->unlock();
 }
 
 bool RosAriaNode::hasSonarSubscribers()
@@ -452,8 +434,6 @@ int RosAriaNode::Setup()
   dynConf_min.rot_vel_max = 0.1; 
   dynConf_min.trans_accel = 0.1;
   dynConf_min.trans_decel = 0.1;
-  dynConf_min.lat_accel = ((robot->getAbsoluteMaxLatAccel() > 0.0) ? robot->getAbsoluteMaxLatAccel() : 0.1) / 1000.0;
-  dynConf_min.lat_decel = ((robot->getAbsoluteMaxLatDecel() > 0.0) ? robot->getAbsoluteMaxLatDecel() : 0.1) / 1000.0;
   dynConf_min.rot_accel = 0.1;
   dynConf_min.rot_decel = 0.1; 
   
@@ -467,13 +447,8 @@ int RosAriaNode::Setup()
   rosaria::RosAriaConfig dynConf_max;
   dynConf_max.trans_vel_max = robot->getAbsoluteMaxTransVel() / 1000.0; 
   dynConf_max.rot_vel_max = robot->getAbsoluteMaxRotVel() *M_PI/180.0; 
-
   dynConf_max.trans_accel = robot->getAbsoluteMaxTransAccel() / 1000.0;
   dynConf_max.trans_decel = robot->getAbsoluteMaxTransDecel() / 1000.0;
-  // TODO: Fix rqt dynamic_reconfigure gui to handle empty intervals
-  // Until then, set unit length interval.
-  dynConf_max.lat_accel = ((robot->getAbsoluteMaxLatAccel() > 0.0) ? robot->getAbsoluteMaxLatAccel() : 0.1) / 1000.0;
-  dynConf_max.lat_decel = ((robot->getAbsoluteMaxLatDecel() > 0.0) ? robot->getAbsoluteMaxLatDecel() : 0.1) / 1000.0;
   dynConf_max.rot_accel = robot->getAbsoluteMaxRotAccel() * M_PI/180.0;
   dynConf_max.rot_decel = robot->getAbsoluteMaxRotDecel() * M_PI/180.0;
   
@@ -483,15 +458,11 @@ int RosAriaNode::Setup()
   dynConf_max.RevCount    = 32760;
   
   dynamic_reconfigure_server->setConfigMax(dynConf_max);
-  
-  
   rosaria::RosAriaConfig dynConf_default;
   dynConf_default.trans_vel_max = robot->getTransVelMax() / 1000.0; 
   dynConf_default.rot_vel_max = robot->getRotVelMax() *M_PI/180.0; 
   dynConf_default.trans_accel = robot->getTransAccel() / 1000.0;
   dynConf_default.trans_decel = robot->getTransDecel() / 1000.0;
-  dynConf_default.lat_accel   = robot->getLatAccel() / 1000.0;
-  dynConf_default.lat_decel   = robot->getLatDecel() / 1000.0;
   dynConf_default.rot_accel   = robot->getRotAccel() * M_PI/180.0;
   dynConf_default.rot_decel   = robot->getRotDecel() * M_PI/180.0;
 
@@ -518,7 +489,6 @@ int RosAriaNode::Setup()
     sonar_tf_array[i].transform.translation.z = 0.19;
     sonar_tf_array[i].transform.rotation = tf::createQuaternionMsgFromYaw(_reading->getSensorTh() * M_PI / 180.0);
   }
-
 
   robot->unlock();
 
@@ -557,11 +527,8 @@ int RosAriaNode::Setup()
 
   robot->unlock();
 
-  ROS_INFO("UNLOCKED IN SETUP. Cramming dynamic reconfigure params in its pie-hole");
   setDynParam("trans_accel", dynConf_default.trans_accel);
   setDynParam("trans_decel", dynConf_default.trans_decel);
-  setDynParam("lat_accel", dynConf_default.lat_accel);
-  setDynParam("lat_decel", dynConf_default.lat_decel);
   setDynParam("rot_accel", dynConf_default.rot_accel);
   setDynParam("rot_decel", dynConf_default.rot_decel);
   setDynParam("trans_vel_max", dynConf_default.trans_vel_max);
@@ -611,8 +578,6 @@ int RosAriaNode::Setup()
 
   // Run ArRobot background processing thread
   robot->runAsync(true);
-
-  ROS_INFO("END OF CONSTRUCTOR");
 
   return 0;
 }
@@ -667,7 +632,6 @@ void RosAriaNode::publish()
   tf::poseTFToMsg(tf::Transform(tf::createQuaternionFromYaw(pos.getTh()*M_PI/180), tf::Vector3(pos.getX()/1000,
     pos.getY()/1000, 0)), position.pose.pose); //Aria returns pose in mm.
   position.twist.twist.linear.x = robot->getVel()/1000; //Aria returns velocity in mm/s.
-  position.twist.twist.linear.y = robot->getLatVel()/1000.0;
   position.twist.twist.angular.z = robot->getRotVel()*M_PI/180;
   
   position.header.frame_id = frame_id_odom;
@@ -787,10 +751,7 @@ void RosAriaNode::publish()
 bool RosAriaNode::enable_motors_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response)
 {
     ROS_INFO("RosAria: Enable motors request.");
-    if (!robot->tryLock()) {
-      ROS_ERROR("Skipping enable_motors_cb because could not lock");
-      return false;
-    }
+    robot->lock();
     if(robot->isEStopPressed())
         ROS_WARN("RosAria: Warning: Enable motors requested, but robot also has E-Stop button pressed. Motors will not enable.");
     robot->enableMotors();
@@ -802,10 +763,7 @@ bool RosAriaNode::enable_motors_cb(std_srvs::Empty::Request& request, std_srvs::
 bool RosAriaNode::disable_motors_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response)
 {
     ROS_INFO("RosAria: Disable motors request.");
-    if (!robot->tryLock()) {
-      ROS_ERROR("Skipping enable_motors_cb because could not lock");
-      return false;
-    }
+    robot->lock();
     robot->disableMotors();
     robot->unlock();
 	// todo could wait and see if motors do become disabled, and send a response with an error flag if not
@@ -820,13 +778,8 @@ RosAriaNode::cmdvel_cb( const geometry_msgs::TwistConstPtr &msg)
   ROS_INFO( "new speed: [%0.2f,%0.2f](%0.3f)", msg->linear.x*1e3, msg->angular.z, veltime.toSec() );
 #endif
 
-  if (!robot->tryLock()) {
-    ROS_WARN("Could not lock robot in cmdvel_cb... skipping this one!");
-    return;
-  }
+  robot->lock();
   robot->setVel(msg->linear.x*1e3);
-  if(robot->hasLatVel())
-    robot->setLatVel(msg->linear.y*1e3);
   robot->setRotVel(msg->angular.z*180/M_PI);
   robot->unlock();
   ROS_DEBUG("RosAria: sent vels to to aria (time %f): x vel %f mm/s, y vel %f mm/s, ang vel %f deg/s", veltime.toSec(),
