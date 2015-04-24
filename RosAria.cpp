@@ -83,8 +83,6 @@ class RosAriaNode
     bool enable_motors_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response);
     bool disable_motors_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response);
 
-    void _setDynParamDouble(std::string key, double value);
-    void _setDynParamInt(std::string key, int value);
     void setDynParam(std::string key, double value);
     void setDynParam(std::string key, int value);
     boost::mutex paramqueue_mutex_;
@@ -140,6 +138,7 @@ class RosAriaNode
 
 void RosAriaNode::_setDynParams()
 {
+  //ROS_INFO("Param set worker started");
   dynamic_reconfigure::ReconfigureRequest srv_req;
   dynamic_reconfigure::ReconfigureResponse srv_resp;
   dynamic_reconfigure::Config cfg;
@@ -147,94 +146,66 @@ void RosAriaNode::_setDynParams()
   bool empty;
   while(ros::ok())
   {
+    if (ros::service::waitForService("~set_parameters", 5000))
     {
       boost::mutex::scoped_lock l(paramqueue_mutex_);
       if (!(empty = paramqueue_.empty())) {
         cfg = paramqueue_.front();
         paramqueue_.pop();
+        //ROS_INFO("Popped a dynamicreconfigure config.... need to set it or die trying. %d remaining", paramqueue_.size());
       }
-      else
-        return;
+      if (empty)
+        break;
+    }
+    else
+    {
+      sleep(0.5);
+      continue;
     }
     srv_req.config = cfg;
     if (!ros::service::call("~set_parameters", srv_req, srv_resp))
       ROS_ERROR("parameter set failed");
-    else
-      ROS_INFO("parameter set succeeded");
+    /*else
+      ROS_INFO("parameter set succeeded");*/
   }
-}
-
-   
-void RosAriaNode::_setDynParamDouble(std::string key, double value)
-{
-  ROS_INFO("IN THREADED SETTER FUNCTION");
-  dynamic_reconfigure::ReconfigureRequest srv_req;
-  dynamic_reconfigure::ReconfigureResponse srv_resp;
-  dynamic_reconfigure::DoubleParameter parm;
-  dynamic_reconfigure::Config conf;
-
-  parm.name = key;
-  parm.value = value;
-  conf.doubles.push_back(parm);
-
-  srv_req.config = conf;
-
-  if (!ros::service::call("~set_parameters", srv_req, srv_resp))
-    ROS_ERROR("Failed to set %s dynparam to %f based on robot's current values", key.c_str(), value);
-  else
-    ROS_INFO("Successfully set %s dynparam to %f", key.c_str(), value);
-}
-
-void RosAriaNode::_setDynParamInt(std::string key, int value)
-{
-  ROS_INFO("IN THREADED SETTER FUNCTION");
-  dynamic_reconfigure::ReconfigureRequest srv_req;
-  dynamic_reconfigure::ReconfigureResponse srv_resp;
-  dynamic_reconfigure::IntParameter parm;
-  dynamic_reconfigure::Config conf;
-
-  parm.name = key;
-  parm.value = value;
-  conf.ints.push_back(parm);
-
-  srv_req.config = conf;
-
-  if (!ros::service::call("~set_parameters", srv_req, srv_resp))
-    ROS_ERROR("Failed to set %s dynparam to %d based on robot's current values", key.c_str(), value);
-  else
-    ROS_INFO("Successfully set %s dynparam to %d", key.c_str(), value);
-   
+  //ROS_INFO("Param set worker done working");
 }
 
 void RosAriaNode::setDynParam(std::string key, int value)
 {
-    ROS_INFO("Starting to set %s to %d", key.c_str(), value);
-    if (ros::service::waitForService("~set_parameters", 5000))
-    {
-      ROS_INFO("Service found... now joining previous thread to set %s to %d", key.c_str(), value);
-      if (param_thread_.joinable())
-      {
-        ROS_INFO("Joining previous set thread to set %s to %d", key.c_str(), value);
-        param_thread_.join();
-      }
-      ROS_INFO("Starting my own thread to set %s to %d", key.c_str(), value);
-      param_thread_ = boost::thread(&RosAriaNode::_setDynParamInt, this, key, value);
-     }
+  dynamic_reconfigure::IntParameter parm;
+  dynamic_reconfigure::Config conf;
+  parm.name = key;
+  parm.value = value;
+  conf.ints.push_back(parm);
+  {
+    boost::mutex::scoped_lock l(paramqueue_mutex_);
+    //ROS_INFO("Enqueueing a dynparam set. %d in queue previously", (int)paramqueue_.size());
+    bool empty = paramqueue_.empty();
+    paramqueue_.push(conf);
+    if (param_thread_.joinable() && empty)
+      param_thread_.join();
+    if (empty)
+      param_thread_ = boost::thread(&RosAriaNode::_setDynParams, this);
+  }
 }
 void RosAriaNode::setDynParam(std::string key, double value)
 {
-    ROS_INFO("Starting to set %s to %f", key.c_str(), value);
-    if (ros::service::waitForService("~set_parameters", 5000))
-    {
-      ROS_INFO("Service found... now joining previous thread to set %s to %f", key.c_str(), value);
-      if (param_thread_.joinable())
-      {
-        ROS_INFO("Joining previous set thread to set %s to %f", key.c_str(), value);
-        param_thread_.join();
-      }
-      ROS_INFO("Starting my own thread to set %s to %f", key.c_str(), value);
-      param_thread_ = boost::thread(&RosAriaNode::_setDynParamDouble, this, key, value);
-     }
+  dynamic_reconfigure::DoubleParameter parm;
+  dynamic_reconfigure::Config conf;
+  parm.name = key;
+  parm.value = value;
+  conf.doubles.push_back(parm);
+  {
+    boost::mutex::scoped_lock l(paramqueue_mutex_);
+    //ROS_INFO("Enqueueing a dynparam set. %d in queue previously", (int)paramqueue_.size());
+    bool empty = paramqueue_.empty();
+    paramqueue_.push(conf);
+    if (param_thread_.joinable() && empty)
+      param_thread_.join();
+    if (empty)
+      param_thread_ = boost::thread(&RosAriaNode::_setDynParams, this);
+  }
 }
 
 void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t level)
@@ -343,6 +314,15 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
 {
   // read in config options
   n = nh;
+  if (n.hasParam("SonarReassignmentSurgery"))
+  {
+    n.getParam( "SonarReassignmentSurgery", sonars__crossed_the_streams);
+    ROS_INFO("Setting SonarReassignmentSurgery to from ROS Parameter: %d", sonars__crossed_the_streams);
+  }
+  else
+    ROS_INFO("Sonars are not fiddled-with -- YAY");
+
+
   // !!! port !!!
   n.param( "port", serial_port, std::string("/dev/ttyUSB0") );
   ROS_INFO( "RosAria: using port: [%s]", serial_port.c_str() );
@@ -462,23 +442,20 @@ int RosAriaNode::Setup()
   // Start dynamic_reconfigure server
   dynamic_reconfigure_server = new dynamic_reconfigure::Server<rosaria::RosAriaConfig>;
 
-  ROS_INFO("LOCKING ROBOT TO BRAINWASH IT FOR DYNAMICRECONFIGURE");
   robot->lock();
-  ROS_INFO("It's brainwashing time...");
 
   // Setup Parameter Minimums
   rosaria::RosAriaConfig dynConf_min;
 
+  //arbitrary non-zero values so dynamic reconfigure isn't STUPID
   dynConf_min.trans_vel_max = 0.1; 
   dynConf_min.rot_vel_max = 0.1; 
-  dynConf_min.trans_accel = robot->getAbsoluteMaxTransAccel() / 1000.0;
-  dynConf_min.trans_decel = robot->getAbsoluteMaxTransDecel() / 1000.0;
-  // TODO: Fix rqt dynamic_reconfigure gui to handle empty intervals
-  // Until then, set unit length interval.
+  dynConf_min.trans_accel = 0.1;
+  dynConf_min.trans_decel = 0.1;
   dynConf_min.lat_accel = ((robot->getAbsoluteMaxLatAccel() > 0.0) ? robot->getAbsoluteMaxLatAccel() : 0.1) / 1000.0;
   dynConf_min.lat_decel = ((robot->getAbsoluteMaxLatDecel() > 0.0) ? robot->getAbsoluteMaxLatDecel() : 0.1) / 1000.0;
-  dynConf_min.rot_accel = robot->getAbsoluteMaxRotAccel() * M_PI/180.0;
-  dynConf_min.rot_decel = robot->getAbsoluteMaxRotDecel() * M_PI/180.0;
+  dynConf_min.rot_accel = 0.1;
+  dynConf_min.rot_decel = 0.1; 
   
   // I'm setting these upper bounds relitivly arbitrarily, feel free to increase them.
   dynConf_min.TicksMM     = 10;
@@ -528,19 +505,6 @@ int RosAriaNode::Setup()
   
   dynamic_reconfigure_server->setConfigDefault(dynConf_default);
 
-  //ROS_INFO("UNLOCKING IN CONSTRUCTOR");
-  //robot->unlock();
-
-  if (n.hasParam("SonarReassignmentSurgery"))
-  {
-    n.getParam( "SonarReassignmentSurgery", sonars__crossed_the_streams);
-    ROS_INFO("Setting SonarReassignmentSurgery to from ROS Parameter: %d", sonars__crossed_the_streams);
-  }
-  else
-    ROS_INFO("Sonars are not fiddled-with -- YAY");
-
-  dynamic_reconfigure_server->setCallback(boost::bind(&RosAriaNode::dynamic_reconfigureCB, this, _1, _2));
-
   for(int i = 0; i < 16; i++)
   {
     sonar_tf_array[i].header.frame_id = frame_id_base_link;
@@ -554,6 +518,11 @@ int RosAriaNode::Setup()
     sonar_tf_array[i].transform.translation.z = 0.19;
     sonar_tf_array[i].transform.rotation = tf::createQuaternionMsgFromYaw(_reading->getSensorTh() * M_PI / 180.0);
   }
+
+
+  robot->unlock();
+
+  dynamic_reconfigure_server->setCallback(boost::bind(&RosAriaNode::dynamic_reconfigureCB, this, _1, _2));
 
   for (int i=0;i<16;i++) {
       sensor_msgs::Range r;
@@ -586,8 +555,8 @@ int RosAriaNode::Setup()
   bumpers.front_bumpers.resize(robot->getNumFrontBumpers());
   bumpers.rear_bumpers.resize(robot->getNumRearBumpers());
 
-  ROS_INFO("ABOUT TO UNLOCK FOR THE LAST TIME ON SETUP'S EXECUTION PATH");
   robot->unlock();
+
   ROS_INFO("UNLOCKED IN SETUP. Cramming dynamic reconfigure params in its pie-hole");
   setDynParam("trans_accel", dynConf_default.trans_accel);
   setDynParam("trans_decel", dynConf_default.trans_decel);
@@ -600,11 +569,6 @@ int RosAriaNode::Setup()
   setDynParam("TicksMM", TicksMM);
   setDynParam("DriftFactor", DriftFactor);
   setDynParam("RevCount", RevCount);
-
-  ROS_INFO("BLOCKING WHILE THE THREAD FINISHED UP");
-  if (param_thread_.joinable())
-    param_thread_.join();
-  ROS_INFO("LOOKS DONE. WINNAR");
 
   pose_pub = n.advertise<nav_msgs::Odometry>("pose",1000);
   bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
